@@ -23,8 +23,13 @@ async function loadPageContext() {
   const icon = faviconUrl(contextPageUrl);
   if (icon) { const image = new Image(); image.alt = ''; image.src = icon; image.onerror = () => image.remove(); mark.prepend(image); }
 }
-function unlockView(error = '') {
-  app.innerHTML = `<form class="unlock"><input name="password" type="password" placeholder="Master password" aria-label="Master password" autofocus required><div class="error">${esc(error)}</div><button class="primary" type="submit">Unlock</button></form>`;
+function unlockView(error = '', settings = {}) {
+  const hint = String(settings.passwordHint || '').trim();
+  app.innerHTML = `<form class="unlock"><input name="password" type="password" placeholder="Master password" aria-label="Master password" autofocus required><div class="error">${esc(error)}</div><button class="primary" type="submit">Unlock</button>${hint ? '<button type="button" class="link show-hint">Show hint</button><div class="password-hint" hidden></div>' : ''}</form>`;
+  if (hint) {
+    const button = app.querySelector('.show-hint'), text = app.querySelector('.password-hint');
+    button.onclick = () => { text.textContent = hint; text.hidden = false; button.hidden = true; };
+  }
   app.querySelector('form').onsubmit = async event => {
     event.preventDefault();
     const button = event.submitter;
@@ -35,7 +40,7 @@ function unlockView(error = '') {
       await rpc({ type: 'SYNC' }).catch(() => {});
       await render();
     } catch (e) {
-      unlockView(e.message);
+      unlockView(e.message, settings);
     }
   };
 }
@@ -45,7 +50,7 @@ async function render() {
     document.querySelector('#lock').hidden = !status.unlocked;
     document.querySelector('#add').hidden = !status.unlocked;
     if (!status.exists) { app.innerHTML = `<div class="empty"><div class="lock-mark">P</div><h2>Welcome to PassMan</h2><p>Create your encrypted password store to get started.</p><button class="primary start">Get started</button></div>`; app.querySelector('.start').onclick = () => chrome.tabs.create({ url: appUrl('#onboarding') }); return; }
-    if (!status.unlocked) return unlockView();
+    if (!status.unlocked) return unlockView('', status.settings || {});
     if (status.settings.syncEnabled && (!status.settings.lastSyncAt || Date.now() - status.settings.lastSyncAt > 15_000)) {
       await rpc({ type: 'SYNC' }).catch(() => {});
     }
