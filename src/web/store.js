@@ -178,5 +178,6 @@ export {
   setSessionKey,
   setSettings,
   touchSession,
+  workerSession as workerMessage,
   writeVault
 };
