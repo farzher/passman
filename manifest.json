@@ -24,6 +24,10 @@
   "options_page": "dist/app/app.html",
   "content_scripts": [{
     "matches": ["http://*/*", "https://*/*"],
+    "exclude_matches": [
+      "https://passman.farzher.com/*",
+      "https://farzher.github.io/passman/*"
+    ],
     "js": ["dist/content/autofill.js"],
     "run_at": "document_idle",
     "all_frames": false,
