@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-web/
 
 # Local environment and secrets
 .env
@@ -7,6 +8,8 @@ dist/
 !.env.example
 *.pem
 *.key
+*.pm
+*.csv
 
 # OS/editor files
 .DS_Store

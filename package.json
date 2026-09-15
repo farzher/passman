@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "build:extension": "node build.mjs extension",
+    "build:web": "node build.mjs web"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0"
