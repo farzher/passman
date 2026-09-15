@@ -12,15 +12,7 @@ import {
   setSettings,
   writeVault
 } from './store.js';
-import {
-  authorizeDrive,
-  disconnectDriveToken,
-  driveResumeNeeded,
-  refreshMetadata,
-  restoreFromDrive,
-  setDriveConnected,
-  syncNow
-} from './drive.js';
+import { authorizeDrive, disconnectDriveToken, restoreFromDrive, syncNow } from './drive.js';
 
 async function mutate(change) {
   const { key, envelope, payload } = await readVault();
@@ -42,13 +34,10 @@ async function handleWebMessage(message) {
     try {
       const { key, payload, settings } = await readVault();
       key.fill(0);
-      setDriveConnected(settings.syncEnabled);
       return { exists: true, unlocked: true, settings, items: payload.items };
     } catch {}
     const exists = !!await getEnvelope();
-    const settings = await getSettings();
-    setDriveConnected(settings.syncEnabled);
-    return { exists, unlocked: false, settings, items: [] };
+    return { exists, unlocked: false, settings: await getSettings(), items: [] };
   }
 
   if (message.type === 'STATUS') {
@@ -61,9 +50,7 @@ async function handleWebMessage(message) {
         unlocked = true;
       } catch {}
     }
-    const settings = await getSettings();
-    setDriveConnected(settings.syncEnabled);
-    return { exists, unlocked, settings };
+    return { exists, unlocked, settings: await getSettings() };
   }
 
   if (message.type === 'SETUP') {
@@ -160,20 +147,14 @@ async function handleWebMessage(message) {
     return { added };
   }
 
-  if (message.type === 'SETTINGS') {
-    const settings = message.patch ? await setSettings(message.patch) : await getSettings();
-    setDriveConnected(settings.syncEnabled);
-    return settings;
-  }
+  if (message.type === 'SETTINGS') return message.patch ? setSettings(message.patch) : getSettings();
 
   if (message.type === 'CONNECT_DRIVE') {
     await authorizeDrive();
     await setSettings({ syncEnabled: true });
-    setDriveConnected(true);
     try {
       await syncNow(false);
     } catch (error) {
-      setDriveConnected(false);
       await setSettings({ syncEnabled: false });
       throw error;
     }
@@ -189,7 +170,6 @@ async function handleWebMessage(message) {
   if (message.type === 'RESTORE_DRIVE') {
     await authorizeDrive();
     await restoreFromDrive();
-    setDriveConnected(true);
     return true;
   }
 
@@ -197,20 +177,6 @@ async function handleWebMessage(message) {
     if (message.interactive) await authorizeDrive();
     await syncNow(false);
     return getSettings();
-  }
-
-  if (message.type === 'RESUME_DRIVE') {
-    if (!driveResumeNeeded()) return false;
-    await authorizeDrive();
-    let unlocked = false;
-    try {
-      const key = await getSessionKey(false);
-      key.fill(0);
-      unlocked = true;
-    } catch {}
-    if (unlocked) await syncNow(false);
-    else await refreshMetadata(false);
-    return true;
   }
 
   if (message.type === 'CHANGE_MASTER') {
