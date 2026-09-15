@@ -18,7 +18,39 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&a
 const notice = (text, kind = '') => `<div class="notice ${kind}">${escape(text)}</div>`;
 function setError(form, error) { const el = form.querySelector('.form-error'); if (el) { el.classList.remove('success'); el.textContent = error instanceof Error ? error.message : String(error); } }
 function go(hash) { location.hash = hash; void render(); }
-function recentTime(item) { return Math.max(Number(item.lastUsedAt) || 0, Number(item.createdAt) || 0); }
+
+function alphabetical(a, b) {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
+    displayHost(a.urls?.[0] || '').localeCompare(displayHost(b.urls?.[0] || ''), undefined, { sensitivity: 'base' });
+}
+
+function compareUsage(a, b) {
+  const at = Number.isFinite(a.lastUsedAt) ? a.lastUsedAt : null;
+  const bt = Number.isFinite(b.lastUsedAt) ? b.lastUsedAt : null;
+  if (at !== null && bt !== null) return bt - at || alphabetical(a, b);
+  if (at !== null) return -1;
+  if (bt !== null) return 1;
+  return alphabetical(a, b);
+}
+
+function relativeUse(time) {
+  if (!Number.isFinite(time)) return '';
+  const minutes = Math.floor(Math.max(0, Date.now() - time) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  if (days < 365) {
+    const months = Math.floor(days / 30);
+    return `${months} month${months === 1 ? '' : 's'} ago`;
+  }
+  const years = Math.floor(days / 365);
+  return `${years} year${years === 1 ? '' : 's'} ago`;
+}
+
 function csvCell(value) { const text = String(value ?? ''); return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }
 function passwordCsv(items) {
   const rows = [['name', 'url', 'username', 'password', 'note'], ...items.map(item => [item.name, item.urls?.[0] || '', item.username, item.password, ''])];
@@ -98,9 +130,27 @@ async function listView(siteUrl = '') {
   shell(`<header class="page-head"><h1>Passwords <span class="password-count">${items.length}</span></h1><button class="primary add">Add password</button></header><input class="page-search" type="search" placeholder="Search passwords…" value="${escape(initialQuery)}" autofocus><section class="credential-list"></section>`);
   const list = root.querySelector('.credential-list'), search = root.querySelector('.page-search');
   let siteFilterActive = !!siteUrl;
-  const draw = () => { const q = search.value.toLowerCase(); const shown = items.filter(i => siteFilterActive ? loginMatchesUrl(i.urls, siteUrl) : `${i.name} ${i.username} ${i.urls.join(' ')}`.toLowerCase().includes(q)).sort((a,b) => recentTime(b) - recentTime(a) || a.name.localeCompare(b.name)); list.textContent = ''; if (!shown.length) list.innerHTML = `<div class="large-empty"><div class="brand small">P</div><h2>${items.length ? 'No results' : 'No passwords yet'}</h2><p>${items.length ? 'Try another search.' : 'Add a password or bring yours over from Chrome.'}</p>${items.length ? '' : '<button class="secondary empty-import">Import Chrome CSV</button>'}</div>`; for (const item of shown) { const button = document.createElement('button'); button.className = 'credential'; button.innerHTML = `<span class="site-icon">${escape(item.name[0]?.toUpperCase() || 'P')}</span><span><b>${escape(item.name)}</b><small>${escape(item.username || 'No username')}</small></span><i>›</i>`; const mark = button.querySelector('.site-icon'), icon = faviconUrl(item.urls[0]); if (icon) { const image = new Image(); image.alt = ''; image.referrerPolicy = 'no-referrer'; image.loading = 'lazy'; image.src = icon; image.onerror = () => image.remove(); mark.prepend(image); } button.onclick = () => go(`edit=${item.id}`); list.append(button); } };
+  const draw = () => {
+    const q = search.value.toLowerCase();
+    const shown = items
+      .filter(item => siteFilterActive ? loginMatchesUrl(item.urls, siteUrl) : `${item.name} ${item.username} ${item.urls.join(' ')}`.toLowerCase().includes(q))
+      .sort(compareUsage);
+    list.textContent = '';
+    if (!shown.length) list.innerHTML = `<div class="large-empty"><div class="brand small">P</div><h2>${items.length ? 'No results' : 'No passwords yet'}</h2><p>${items.length ? 'Try another search.' : 'Add a password or bring yours over from Chrome.'}</p>${items.length ? '' : '<button class="secondary empty-import">Import Chrome CSV</button>'}</div>`;
+    for (const item of shown) {
+      const button = document.createElement('button');
+      button.className = 'credential';
+      button.innerHTML = `<span class="site-icon">${escape(item.name[0]?.toUpperCase() || 'P')}</span><span class="credential-copy"><b>${escape(item.name)}</b><small>${escape(item.username || 'No username')}</small></span><span class="credential-age">${escape(relativeUse(item.lastUsedAt))}</span>`;
+      const mark = button.querySelector('.site-icon'), icon = faviconUrl(item.urls[0]);
+      if (icon) { const image = new Image(); image.alt = ''; image.src = icon; image.onerror = () => image.remove(); mark.prepend(image); }
+      button.onclick = () => go(`edit=${item.id}`);
+      list.append(button);
+    }
+  };
   list.onclick = event => { if (!event.target.closest('.empty-import')) return; chooseCsv(csvItems => { const counts = importCounts(csvItems, items); list.innerHTML = `<div class="import-summary"><b>${csvItems.length} passwords found</b><span>${counts.newCount} new · ${counts.duplicates} duplicates</span><button class="primary confirm-import">Import</button><button class="link cancel-import">Cancel</button></div>`; list.querySelector('.cancel-import').onclick = draw; list.querySelector('.confirm-import').onclick = async importEvent => { importEvent.target.disabled = true; const result = await rpc({ type: 'IMPORT', items: csvItems }); list.innerHTML = `${notice(`${result.added} passwords imported.`, 'success')}<p class="csv-warning">The CSV contains unencrypted passwords. Delete it when you no longer need it.</p><button class="primary import-done">Done</button>`; list.querySelector('.import-done').onclick = () => render(); }; }); };
-  search.oninput = () => { siteFilterActive = false; draw(); }; draw(); root.querySelector('.add').onclick = () => go('new');
+  search.oninput = () => { siteFilterActive = false; draw(); };
+  draw();
+  root.querySelector('.add').onclick = () => go('new');
 }
 
 async function editView(id, suggestedUrl = '') {
@@ -108,9 +158,14 @@ async function editView(id, suggestedUrl = '') {
   shell(`<button class="back link">← Passwords</button><div class="editor"><h1>${item ? escape(item.name) : 'Add password'}</h1><form><label>Name<input name="name" value="${escape(item?.name || '')}" required></label><label>Website<input name="url" value="${escape(item?.urls[0] || suggestedUrl)}" placeholder="https://example.com" required></label><label>Username<div class="copy-input"><input name="username" value="${escape(item?.username || '')}" autocomplete="off" required><button type="button" class="copy-username secondary">Copy</button></div></label><label>Password<div class="password-input"><input name="password" value="${escape(item?.password || '')}" type="password" autocomplete="new-password" required><button type="button" class="generate secondary" title="Generate a memorable password">Generate</button><button type="button" class="copy-password secondary">Copy</button><button type="button" class="show secondary">Show</button></div></label><div class="form-error"></div><div class="editor-actions"><button class="primary">Save</button>${item ? '<button type="button" class="danger delete">Delete password</button>' : ''}</div></form></div>`);
   root.querySelector('.back').onclick = () => go(''); const form = root.querySelector('form'); const password = form.elements.password;
   const showButton = root.querySelector('.show');
-  showButton.onclick = () => { password.type = password.type === 'password' ? 'text' : 'password'; showButton.textContent = password.type === 'password' ? 'Show' : 'Hide'; };
+  showButton.onclick = () => {
+    const revealing = password.type === 'password';
+    password.type = revealing ? 'text' : 'password';
+    showButton.textContent = revealing ? 'Hide' : 'Show';
+    if (revealing && item) void rpc({ type: 'MARK_USED', id: item.id }).catch(() => {});
+  };
   root.querySelector('.generate').onclick = () => { password.value = generatePassword(); password.type = 'text'; showButton.textContent = 'Hide'; password.focus(); password.select(); };
-  root.querySelector('.copy-username').onclick = async event => { await copyText(form.elements.username.value, event.currentTarget); if (item) void rpc({ type: 'MARK_USED', id: item.id }).catch(() => {}); };
+  root.querySelector('.copy-username').onclick = event => copyText(form.elements.username.value, event.currentTarget);
   root.querySelector('.copy-password').onclick = async event => { await copyText(password.value, event.currentTarget); if (item) void rpc({ type: 'MARK_USED', id: item.id }).catch(() => {}); };
   form.onsubmit = async event => { event.preventDefault(); const data = new FormData(form); try { await rpc({ type: 'UPSERT', login: { id: item?.id, name: data.get('name'), urls: [data.get('url')], username: data.get('username'), password: data.get('password') } }); go(''); } catch (e) { setError(form, e); } };
   root.querySelector('.delete')?.addEventListener('click', async () => { if (confirm(`Delete ${item.name}?`)) { await rpc({ type: 'DELETE', id: item.id }); go(''); } });
