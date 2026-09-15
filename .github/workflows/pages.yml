@@ -34,6 +34,7 @@ jobs:
         run: npm ci
 
       - name: Build extension and PWA
+        # Public Web OAuth client ID; no client secret is used in this static build.
         env:
           PASSMAN_GOOGLE_CLIENT_ID: ${{ vars.PASSMAN_GOOGLE_CLIENT_ID }}
         run: npm run build
