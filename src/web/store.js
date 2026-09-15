@@ -5,7 +5,6 @@ const DB_NAME = 'passman-web';
 const STORE_NAME = 'state';
 const VAULT = 'vault';
 const SETTINGS = 'settings';
-const WEB_SETTINGS_VERSION = 2;
 
 let dbPromise;
 let sessionKey = null;
@@ -74,25 +73,15 @@ async function setEnvelope(envelope) {
 }
 
 async function getSettings() {
-  let stored = await readValue(SETTINGS) || {};
-  if (stored.webSettingsVersion !== WEB_SETTINGS_VERSION) {
-    const previousVersion = stored.webSettingsVersion;
-    stored = { ...stored, webSettingsVersion: WEB_SETTINGS_VERSION };
-    if (previousVersion === 1 && stored.autoLockMinutes === 60) {
-      stored.autoLockMinutes = DEFAULT_SETTINGS.autoLockMinutes;
-    }
-    await writeValue(SETTINGS, stored);
-  }
-  let envelope = await getEnvelope();
-  const legacyHint = String(stored.passwordHint || '').trim();
-  if (envelope && !envelope.passwordHint && legacyHint) {
-    envelope = { ...envelope, passwordHint: { text: legacyHint.slice(0, 160), updatedAt: Date.now() } };
-    await setEnvelope(envelope);
-  }
-  return { ...DEFAULT_SETTINGS, ...stored, passwordHint: String(envelope?.passwordHint?.text ?? legacyHint) };
+  const stored = await readValue(SETTINGS) || {};
+  const envelope = await getEnvelope();
+  return { ...DEFAULT_SETTINGS, ...stored, passwordHint: String(envelope?.passwordHint?.text || '') };
 }
 
 async function setSettings(patch) {
+  const stored = await readValue(SETTINGS) || {};
+  const next = { ...DEFAULT_SETTINGS, ...stored, ...patch };
+
   if (Object.prototype.hasOwnProperty.call(patch, 'passwordHint')) {
     const envelope = await getEnvelope();
     if (envelope) {
@@ -100,9 +89,11 @@ async function setSettings(patch) {
       await setEnvelope({ ...envelope, passwordHint: { text, updatedAt: Date.now() } });
     }
   }
-  const settings = { ...await getSettings(), ...patch };
-  await writeValue(SETTINGS, settings);
-  return settings;
+
+  delete next.passwordHint;
+  await writeValue(SETTINGS, next);
+  const envelope = await getEnvelope();
+  return { ...next, passwordHint: String(envelope?.passwordHint?.text || '') };
 }
 
 async function setSessionKey(key) {
