@@ -21,9 +21,7 @@ let tokenClient = null;
 let authorizationPromise = null;
 let savedTokenPromise = null;
 let savedTokenChecked = false;
-let driveConnected = false;
 
-void getSettings().then(settings => { driveConnected = !!settings.syncEnabled; }).catch(() => {});
 void restoreSavedToken();
 
 function driveConfigured() {
@@ -32,14 +30,6 @@ function driveConfigured() {
 
 function tokenValid() {
   return !!accessToken && Date.now() < tokenExpiresAt;
-}
-
-function driveResumeNeeded() {
-  return driveConnected && savedTokenChecked && !tokenValid();
-}
-
-function setDriveConnected(value) {
-  driveConnected = !!value;
 }
 
 function authRequired() {
@@ -138,12 +128,8 @@ async function authorizeDrive() {
 async function token(interactive) {
   if (tokenValid()) return accessToken;
   if (await restoreSavedToken()) return accessToken;
-  try {
-    return await authorizeDrive();
-  } catch (error) {
-    if (!interactive) throw authRequired();
-    throw error;
-  }
+  if (!interactive) throw authRequired();
+  return authorizeDrive();
 }
 
 async function request(url, init = {}, interactive = false) {
@@ -151,12 +137,8 @@ async function request(url, init = {}, interactive = false) {
   let response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${value}`, ...init.headers } });
   if (response.status === 401) {
     await clearToken();
-    try {
-      value = await authorizeDrive();
-    } catch (error) {
-      if (!interactive) throw authRequired();
-      throw error;
-    }
+    if (!interactive) throw authRequired();
+    value = await authorizeDrive();
     response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${value}`, ...init.headers } });
   }
   return response;
@@ -165,13 +147,12 @@ async function request(url, init = {}, interactive = false) {
 async function disconnectDriveToken() {
   const value = accessToken || (await getDriveToken())?.token || '';
   await clearToken();
-  driveConnected = false;
   if (value && globalThis.google?.accounts?.oauth2?.revoke) {
     google.accounts.oauth2.revoke(value, () => {});
   }
 }
 
-const { refreshMetadata, restoreFromDrive, syncNow } = createDriveSync({
+const { restoreFromDrive, syncNow } = createDriveSync({
   request,
   getEnvelope,
   getSettings,
@@ -185,9 +166,6 @@ export {
   authorizeDrive,
   disconnectDriveToken,
   driveConfigured,
-  driveResumeNeeded,
-  refreshMetadata,
   restoreFromDrive,
-  setDriveConnected,
   syncNow
 };
