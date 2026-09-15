@@ -1,5 +1,16 @@
 import { createDriveSync } from '../sync/drive-core.js';
-import { getEnvelope, getSettings, readVault, setEnvelope, setSettings, workerMessage, writeVault } from './store.js';
+import {
+  clearDriveToken,
+  getDriveToken,
+  getEnvelope,
+  getSettings,
+  readVault,
+  setDriveToken,
+  setEnvelope,
+  setSettings,
+  workerMessage,
+  writeVault
+} from './store.js';
 
 const CLIENT_ID = __PASSMAN_GOOGLE_CLIENT_ID__;
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
@@ -8,12 +19,12 @@ let accessToken = '';
 let tokenExpiresAt = 0;
 let tokenClient = null;
 let authorizationPromise = null;
-let workerTokenPromise = null;
-let workerTokenChecked = false;
+let savedTokenPromise = null;
+let savedTokenChecked = false;
 let driveConnected = false;
 
 void getSettings().then(settings => { driveConnected = !!settings.syncEnabled; }).catch(() => {});
-void restoreWorkerToken();
+void restoreSavedToken();
 
 function driveConfigured() {
   return !!CLIENT_ID;
@@ -24,7 +35,7 @@ function tokenValid() {
 }
 
 function driveResumeNeeded() {
-  return driveConnected && workerTokenChecked && !tokenValid();
+  return driveConnected && savedTokenChecked && !tokenValid();
 }
 
 function setDriveConnected(value) {
@@ -56,35 +67,51 @@ function getTokenClient() {
   return tokenClient;
 }
 
-async function restoreWorkerToken() {
+async function restoreSavedToken() {
   if (tokenValid()) return true;
-  if (workerTokenChecked) return false;
-  if (workerTokenPromise) return workerTokenPromise;
-  workerTokenPromise = (async () => {
-    const saved = await workerMessage({ type: 'PASSMAN_DRIVE_GET' });
-    workerTokenChecked = true;
-    if (saved?.token && Number(saved.expiresAt) > Date.now()) {
+  if (savedTokenChecked) return false;
+  if (savedTokenPromise) return savedTokenPromise;
+  savedTokenPromise = (async () => {
+    const worker = await workerMessage({ type: 'PASSMAN_DRIVE_GET' });
+    if (worker?.token && Number(worker.expiresAt) > Date.now()) {
+      accessToken = worker.token;
+      tokenExpiresAt = Number(worker.expiresAt);
+      savedTokenChecked = true;
+      void setDriveToken(accessToken, tokenExpiresAt);
+      return true;
+    }
+
+    const saved = await getDriveToken();
+    savedTokenChecked = true;
+    if (saved?.token && saved.expiresAt > Date.now()) {
       accessToken = saved.token;
-      tokenExpiresAt = Number(saved.expiresAt);
+      tokenExpiresAt = saved.expiresAt;
+      void workerMessage({ type: 'PASSMAN_DRIVE_SET', token: accessToken, expiresAt: tokenExpiresAt });
       return true;
     }
     return false;
-  })().finally(() => { workerTokenPromise = null; });
-  return workerTokenPromise;
+  })().finally(() => { savedTokenPromise = null; });
+  return savedTokenPromise;
 }
 
-function rememberToken(token, expiresAt) {
+async function rememberToken(token, expiresAt) {
   accessToken = token;
   tokenExpiresAt = expiresAt;
-  workerTokenChecked = true;
-  void workerMessage({ type: 'PASSMAN_DRIVE_SET', token, expiresAt });
+  savedTokenChecked = true;
+  await Promise.all([
+    setDriveToken(token, expiresAt),
+    workerMessage({ type: 'PASSMAN_DRIVE_SET', token, expiresAt })
+  ]);
 }
 
-function clearToken() {
+async function clearToken() {
   accessToken = '';
   tokenExpiresAt = 0;
-  workerTokenChecked = true;
-  void workerMessage({ type: 'PASSMAN_DRIVE_CLEAR' });
+  savedTokenChecked = true;
+  await Promise.all([
+    clearDriveToken(),
+    workerMessage({ type: 'PASSMAN_DRIVE_CLEAR' })
+  ]);
 }
 
 async function authorizeDrive() {
@@ -98,8 +125,9 @@ async function authorizeDrive() {
         return;
       }
       const expiresAt = Date.now() + Math.max(0, Number(response.expires_in || 0) * 1000 - 60_000);
-      rememberToken(response.access_token, expiresAt);
-      resolve(accessToken);
+      void rememberToken(response.access_token, expiresAt)
+        .then(() => resolve(accessToken))
+        .catch(reject);
     };
     client.error_callback = () => reject(new Error('Google authorization was cancelled.'));
     client.requestAccessToken({ prompt: '' });
@@ -113,26 +141,34 @@ async function authorizeDrive() {
 
 async function token(interactive) {
   if (tokenValid()) return accessToken;
-  if (await restoreWorkerToken()) return accessToken;
-  if (!interactive) throw authRequired();
-  return authorizeDrive();
+  if (await restoreSavedToken()) return accessToken;
+  try {
+    return await authorizeDrive();
+  } catch (error) {
+    if (!interactive) throw authRequired();
+    throw error;
+  }
 }
 
 async function request(url, init = {}, interactive = false) {
   let value = await token(interactive);
   let response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${value}`, ...init.headers } });
   if (response.status === 401) {
-    clearToken();
-    if (!interactive) throw authRequired();
-    value = await authorizeDrive();
+    await clearToken();
+    try {
+      value = await authorizeDrive();
+    } catch (error) {
+      if (!interactive) throw authRequired();
+      throw error;
+    }
     response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${value}`, ...init.headers } });
   }
   return response;
 }
 
-function disconnectDriveToken() {
-  const value = accessToken;
-  clearToken();
+async function disconnectDriveToken() {
+  const value = accessToken || (await getDriveToken())?.token || '';
+  await clearToken();
   driveConnected = false;
   if (value && globalThis.google?.accounts?.oauth2?.revoke) {
     google.accounts.oauth2.revoke(value, () => {});
