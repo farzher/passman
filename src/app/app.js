@@ -4,6 +4,7 @@ import { displayHost, faviconUrl, loginMatchesUrl } from '../shared/util.js';
 
 const root = document.querySelector('#app');
 const platform = globalThis.passmanPlatform || 'extension';
+const driveConfigured = platform !== 'web' || !!globalThis.passmanDriveConfigured;
 const extensionRuntime = globalThis.chrome?.runtime;
 const rpc = globalThis.passmanRpc || (extensionRuntime?.sendMessage
   ? async message => {
@@ -24,8 +25,7 @@ async function copyText(value, button) {
   } catch {
     const input = document.createElement('textarea');
     input.value = value;
-    input.style.position = 'fixed';
-    input.style.opacity = '0';
+    input.className = 'clipboard-copy';
     document.body.append(input);
     input.select();
     document.execCommand('copy');
@@ -38,7 +38,7 @@ async function copyText(value, button) {
 
 function setupView() {
   const webDriveHint = platform === 'web'
-    ? '<p class="hint">Web Drive restore requires a Web OAuth client from the same Google Cloud project as the extension.</p>'
+    ? `<p class="hint">${driveConfigured ? 'Web Drive restore uses a Web OAuth client from the same Google Cloud project as the extension.' : 'Google Drive is not configured for this web build. Local encrypted backups still work.'}</p>`
     : '';
   root.innerHTML = `<main class="center-card onboarding"><div class="brand">P</div><h1>Welcome to PassMan</h1><p>Create a master password</p><form><label>Master password<input name="password" type="password" minlength="10" required autofocus></label><label>Confirm password<input name="confirm" type="password" required></label><div class="form-error"></div><button class="primary wide">Continue</button></form><div class="or"><span>or</span></div><button class="secondary wide restore">Restore from Google Drive</button><div class="form-error"></div><p class="hint">Your master password cannot be recovered. Use one you will remember.</p>${webDriveHint}</main>`;
   const form = root.querySelector('form'); form.onsubmit = async event => { event.preventDefault(); const data = new FormData(form); if (data.get('password') !== data.get('confirm')) return setError(form, 'Passwords do not match.'); const button = event.submitter; button.disabled = true; button.textContent = 'Creating securely…'; try { await rpc({ type: 'SETUP', password: data.get('password') }); go('backup'); } catch (e) { setError(form, e); button.disabled = false; button.textContent = 'Continue'; } };
@@ -63,7 +63,11 @@ function importCounts(items, existing) {
 }
 
 function backupChoiceView() {
-  root.innerHTML = `<main class="center-card onboarding"><h1>Keep your passwords backed up</h1><p>Choose where PassMan keeps your encrypted passwords.</p><label class="choice"><input type="radio" name="place" value="drive" checked><span><b>Google Drive <em>Recommended</em></b><small>Sync encrypted passwords between your devices.</small></span></label><label class="choice"><input type="radio" name="place" value="local"><span><b>This device only</b><small>PassMan works fully offline.</small></span></label><div class="form-error"></div><button class="primary wide continue">Continue</button></main>`;
+  const driveChecked = driveConfigured ? ' checked' : '';
+  const localChecked = driveConfigured ? '' : ' checked';
+  const driveDisabled = driveConfigured ? '' : ' disabled';
+  const driveBadge = driveConfigured ? '<em>Recommended</em>' : '<em>Not configured</em>';
+  root.innerHTML = `<main class="center-card onboarding"><h1>Keep your passwords backed up</h1><p>Choose where PassMan keeps your encrypted passwords.</p><label class="choice"><input type="radio" name="place" value="drive"${driveChecked}${driveDisabled}><span><b>Google Drive ${driveBadge}</b><small>Sync encrypted passwords between your devices.</small></span></label><label class="choice"><input type="radio" name="place" value="local"${localChecked}><span><b>This device only</b><small>PassMan works fully offline.</small></span></label><div class="form-error"></div><button class="primary wide continue">Continue</button></main>`;
   root.querySelector('.continue').onclick = async event => { event.target.disabled = true; try { if (root.querySelector('[value=drive]').checked) await rpc({ type: 'CONNECT_DRIVE' }); go(''); } catch (e) { root.querySelector('.form-error').textContent = e.message; event.target.disabled = false; } };
 }
 
