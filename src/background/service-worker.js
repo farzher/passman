@@ -57,19 +57,30 @@ async function handle(message, sender) {
   const isContent = contentCommands.has(message.type);
   const page = isContent ? senderPage(sender) : (trustedExtension(sender), '');
 
-  if (message.type === 'STATUS') {
-    const exists = !!await getEnvelope();
-    let unlocked = false;
-    if (exists) try {
-      await readVault();
-      unlocked = true;
+  if (message.type === 'STATE') {
+    try {
+      const { payload, settings } = await readVault();
+      return { exists: true, unlocked: true, settings, items: payload.items };
     } catch {}
-    let settings = await getSettings();
-    if (exists && !unlocked && settings.syncEnabled) {
-      await refreshMetadata(false).catch(() => {});
-      settings = await getSettings();
-    }
-    return { exists, unlocked, settings };
+    const exists = !!await getEnvelope();
+    const settings = await getSettings();
+    return { exists, unlocked: false, settings, items: [] };
+  }
+
+  if (message.type === 'STATUS') {
+    try {
+      const { settings } = await readVault();
+      return { exists: true, unlocked: true, settings };
+    } catch {}
+    const exists = !!await getEnvelope();
+    const settings = await getSettings();
+    if (exists && settings.syncEnabled) void refreshMetadata(false).catch(() => {});
+    return { exists, unlocked: false, settings };
+  }
+
+  if (message.type === 'REFRESH_METADATA') {
+    await refreshMetadata(!!message.interactive);
+    return getSettings();
   }
 
   if (message.type === 'SETUP') {
