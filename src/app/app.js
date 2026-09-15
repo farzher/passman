@@ -185,8 +185,25 @@ function openHintDialog(settings) {
   const dialog = document.createElement('dialog'); dialog.className = 'master-dialog';
   dialog.innerHTML = `<form method="dialog" class="master"><header><h2>Password hint</h2><button class="link close" value="cancel">✕</button></header><label>Hint<input name="hint" maxlength="160" value="${escape(settings.passwordHint || '')}" placeholder="Something only you will understand" autofocus></label><div class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button>${settings.passwordHint ? '<button type="button" class="link remove-hint">Remove</button>' : ''}<button value="default" class="primary save-hint">Save</button></div></form>`;
   document.body.append(dialog); dialog.showModal(); dialog.addEventListener('close', () => dialog.remove()); const form = dialog.querySelector('form');
-  dialog.querySelector('.remove-hint')?.addEventListener('click', async () => { await rpc({ type: 'SETTINGS', patch: { passwordHint: '' } }); if (settings.syncEnabled) await rpc({ type: 'SYNC' }).catch(() => {}); dialog.close(); settingsView(); });
-  form.onsubmit = async event => { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const hint = String(new FormData(form).get('hint') || '').trim(); await rpc({ type: 'SETTINGS', patch: { passwordHint: hint } }); if (settings.syncEnabled) await rpc({ type: 'SYNC' }).catch(() => {}); dialog.close(); settingsView(); };
+  dialog.querySelector('.remove-hint')?.addEventListener('click', async () => {
+    try {
+      await rpc({ type: 'SETTINGS', patch: { passwordHint: '' } });
+      if (settings.syncEnabled) await rpc({ type: 'SYNC', interactive: true });
+      dialog.close();
+      settingsView();
+    } catch (e) { setError(form, e); }
+  });
+  form.onsubmit = async event => {
+    if (event.submitter?.value === 'cancel') return;
+    event.preventDefault();
+    try {
+      const hint = String(new FormData(form).get('hint') || '').trim();
+      await rpc({ type: 'SETTINGS', patch: { passwordHint: hint } });
+      if (settings.syncEnabled) await rpc({ type: 'SYNC', interactive: true });
+      dialog.close();
+      settingsView();
+    } catch (e) { setError(form, e); }
+  };
 }
 
 async function settingsView() {
