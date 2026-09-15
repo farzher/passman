@@ -100,6 +100,12 @@ If Pages has never been enabled for the repository, set **Settings → Pages →
 
 The PWA intentionally does not use React, Vue, a router, a server, analytics, telemetry, remote fonts, or a third-party UI framework.
 
+### Web origin isolation
+
+GitHub project Pages are path-isolated but **not origin-isolated**: `https://farzher.github.io/passman/` shares the browser origin `https://farzher.github.io` with other repositories published at `farzher.github.io/<project>/`. Browser storage and same-origin page access are protected by origin, not path, so this is weaker isolation than a password manager should ideally use.
+
+For real credentials, prefer deploying PassMan on a dedicated origin such as `https://passman.farzher.com/` and configuring the Web OAuth client for that origin. The GitHub Pages project URL is useful for development and can redirect to the isolated custom domain, but CSP cannot turn sibling paths on the same origin into separate security boundaries.
+
 ## Security model
 
 A new vault gets a random 256-bit vault key. The master password is processed with packaged `@noble/hashes` Argon2id using 64 MiB memory and three iterations. That derived key wraps the vault key with AES-256-GCM. The complete JSON vault payload is separately encrypted with the random vault key and a fresh 96-bit nonce on every write.
