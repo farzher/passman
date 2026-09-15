@@ -5,6 +5,15 @@ const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const DRIVE_NAME = 'passman.pm';
 
+function mergeHint(local, remote) {
+  const a = local?.passwordHint;
+  const b = remote?.passwordHint;
+  const at = Number(a?.updatedAt) || 0;
+  const bt = Number(b?.updatedAt) || 0;
+  if (bt <= at) return local;
+  return { ...local, passwordHint: { text: String(b?.text || '').slice(0, 160), updatedAt: bt } };
+}
+
 function createDriveSync({ request, getSettings, readVault, setEnvelope, setSettings, writeVault }) {
   async function checked(response) {
     if (!response.ok) throw new Error(`Google Drive error (${response.status}).`);
@@ -85,6 +94,7 @@ ${JSON.stringify(envelope)}\r
       }
 
       if (settings.driveVersion !== file.version) {
+        envelope = mergeHint(envelope, remote.envelope);
         const remotePayload = await decryptPayload(key, remote.envelope);
         payload = mergeVaults(payload, remotePayload);
         envelope = await writeVault(key, envelope, payload);
@@ -100,6 +110,7 @@ ${JSON.stringify(envelope)}\r
         const latestFile = await findDriveVault(interactive);
         if (!latestFile) throw error;
         const latest = await downloadDriveVault(latestFile, interactive);
+        envelope = mergeHint(envelope, latest.envelope);
         payload = mergeVaults(payload, await decryptPayload(key, latest.envelope));
         envelope = await writeVault(key, envelope, payload);
         file = await upload(envelope, latestFile, latest.etag);
