@@ -156,7 +156,11 @@ function backupChoiceView() {
 }
 
 function shell(content, selected = 'passwords') {
-  root.innerHTML = `<aside><div class="wordmark"><span>P</span>PassMan</div><nav><button data-go="" data-label="Passwords" class="${selected === 'passwords' ? 'active' : ''}">Passwords</button><button data-go="settings" data-label="Settings" class="${selected === 'settings' ? 'active' : ''}">Settings</button></nav><button class="lock link">Lock</button></aside><main class="workspace">${content}</main>`;
+  root.innerHTML = `<aside><div class="wordmark" role="button" tabindex="0" aria-label="Passwords"><span>P</span>PassMan</div><nav><button data-go="" data-label="Passwords" class="${selected === 'passwords' ? 'active' : ''}">Passwords</button><button data-go="settings" data-label="Settings" class="${selected === 'settings' ? 'active' : ''}">Settings</button></nav><button class="lock link">Lock</button></aside><main class="workspace">${content}</main>`;
+  const home = root.querySelector('.wordmark');
+  home.style.cursor = 'pointer';
+  home.onclick = () => go('');
+  home.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); go(''); } };
   root.querySelectorAll('[data-go]').forEach(button => button.onclick = () => go(button.dataset.go)); root.querySelector('.lock').onclick = async () => { await rpc({ type: 'LOCK' }); go('unlock'); };
 }
 
