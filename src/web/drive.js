@@ -1,5 +1,5 @@
 import { createDriveSync } from '../sync/drive-core.js';
-import { getSettings, readVault, setEnvelope, setSettings, writeVault } from './store.js';
+import { getEnvelope, getSettings, readVault, setEnvelope, setSettings, writeVault } from './store.js';
 
 const CLIENT_ID = __PASSMAN_GOOGLE_CLIENT_ID__;
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
@@ -79,6 +79,7 @@ function disconnectDriveToken() {
 
 const { restoreFromDrive, syncNow } = createDriveSync({
   request,
+  getEnvelope,
   getSettings,
   readVault,
   setEnvelope,
