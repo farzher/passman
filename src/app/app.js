@@ -37,10 +37,7 @@ async function copyText(value, button) {
 }
 
 function setupView() {
-  const webDriveHint = platform === 'web'
-    ? `<p class="hint">${driveConfigured ? 'Web Drive restore uses a Web OAuth client from the same Google Cloud project as the extension.' : 'Google Drive is not configured for this web build. Local encrypted backups still work.'}</p>`
-    : '';
-  root.innerHTML = `<main class="center-card onboarding"><div class="brand">P</div><h1>Welcome to PassMan</h1><p>Create a master password</p><form><label>Master password<input name="password" type="password" minlength="10" required autofocus></label><label>Confirm password<input name="confirm" type="password" required></label><div class="form-error"></div><button class="primary wide">Continue</button></form><div class="or"><span>or</span></div><button class="secondary wide restore">Restore from Google Drive</button><div class="form-error"></div><p class="hint">Your master password cannot be recovered. Use one you will remember.</p>${webDriveHint}</main>`;
+  root.innerHTML = `<main class="center-card onboarding"><div class="brand">P</div><h1>Welcome to PassMan</h1><p>Create a master password</p><form><label>Master password<input name="password" type="password" minlength="10" required autofocus></label><label>Confirm password<input name="confirm" type="password" required></label><div class="form-error"></div><button class="primary wide">Continue</button></form><div class="or"><span>or</span></div><button class="secondary wide restore">Restore from Google Drive</button><div class="form-error"></div></main>`;
   const form = root.querySelector('form'); form.onsubmit = async event => { event.preventDefault(); const data = new FormData(form); if (data.get('password') !== data.get('confirm')) return setError(form, 'Passwords do not match.'); const button = event.submitter; button.disabled = true; button.textContent = 'Creating securely…'; try { await rpc({ type: 'SETUP', password: data.get('password') }); go('backup'); } catch (e) { setError(form, e); button.disabled = false; button.textContent = 'Continue'; } };
   root.querySelector('.restore').onclick = async event => { event.target.disabled = true; event.target.textContent = 'Connecting…'; try { await rpc({ type: 'RESTORE_DRIVE' }); go('unlock'); } catch (e) { event.target.disabled = false; event.target.textContent = 'Restore from Google Drive'; root.querySelector('.form-error').textContent = e.message; } };
 }
@@ -121,47 +118,32 @@ async function settingsView() {
       <div class="setting-row">${icon('<rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>')}<div class="setting-copy"><h2>Master password</h2></div><button class="secondary change-master">Change</button></div>
     </section>
     ${webNote}
-  </div>
-  <dialog class="master-dialog"><form class="master"><header><h2>Change master password</h2><button type="button" class="link close-master" aria-label="Close">✕</button></header><label>Current password<input type="password" name="currentPassword" autocomplete="current-password" required></label><label>New password<input type="password" name="password" minlength="10" autocomplete="new-password" required></label><label>Confirm new password<input type="password" name="confirmPassword" minlength="10" autocomplete="new-password" required></label><div class="form-error" role="status"></div><div class="dialog-actions"><button type="button" class="secondary cancel-master">Cancel</button><button class="primary">Change password</button></div></form></dialog>`, 'settings');
-
-  const select = root.querySelector('.autolock'); select.value = String(settings.autoLockMinutes); select.onchange = () => rpc({ type: 'SETTINGS', patch: { autoLockMinutes: Number(select.value) } });
+  </div>`, 'settings');
+  const lock = root.querySelector('.autolock'); lock.value = String(settings.autoLockMinutes); lock.onchange = async () => rpc({ type: 'SETTINGS', autoLockMinutes: Number(lock.value) });
   root.querySelector('.connect')?.addEventListener('click', async event => { event.target.disabled = true; try { await rpc({ type: 'CONNECT_DRIVE' }); settingsView(); } catch (e) { alert(e.message); event.target.disabled = false; } });
-  root.querySelector('.sync')?.addEventListener('click', async event => { event.target.disabled = true; event.target.textContent = 'Syncing…'; try { await rpc({ type: 'SYNC', interactive: true }); settingsView(); } catch (e) { alert(e.message); settingsView(); } });
+  root.querySelector('.sync')?.addEventListener('click', async event => { event.target.disabled = true; event.target.textContent = 'Syncing…'; try { await rpc({ type: 'SYNC', interactive: true }); settingsView(); } catch (e) { alert(e.message); event.target.disabled = false; event.target.textContent = 'Sync'; } });
   root.querySelector('.disconnect')?.addEventListener('click', async () => { await rpc({ type: 'DISCONNECT_DRIVE' }); settingsView(); });
-  root.querySelector('.import').onclick = () => chooseCsv(async items => { const existing = await rpc({ type: 'LIST' }), counts = importCounts(items, existing); const area = root.querySelector('.import-result'); area.innerHTML = `<div class="import-summary"><b>${items.length} passwords found</b><span>${counts.newCount} new · ${counts.duplicates} duplicates</span><button class="primary confirm-import">Import</button></div>`; area.querySelector('button').onclick = async () => { const result = await rpc({ type: 'IMPORT', items }); area.innerHTML = `${notice(`${result.added} passwords imported.`, 'success')}<p class="csv-warning">The CSV contains unencrypted passwords. Delete it when you no longer need it.</p>`; }; });
-  root.querySelector('.export').onclick = async () => { const envelope = await rpc({ type: 'EXPORT_BACKUP' }); const blob = new Blob([JSON.stringify(envelope)], { type: 'application/x-passman' }), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `PassMan-Backup-${new Date().toISOString().slice(0,10)}.pm`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); };
-  root.querySelector('.restore').onclick = () => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.pm'; input.onchange = async () => { try { const envelope = JSON.parse(await input.files[0].text()); if (!confirm('Replace the local vault with this encrypted backup?')) return; const password = prompt('Enter the master password for this backup:'); if (!password) return; await rpc({ type: 'IMPORT_BACKUP', envelope, password }); go(''); } catch (e) { alert(`Could not restore backup: ${e.message}`); } }; input.click(); };
-  const dialog = root.querySelector('.master-dialog'), changeMaster = root.querySelector('.change-master'), form = dialog.querySelector('.master');
-  changeMaster.onclick = () => { form.reset(); setError(form, ''); dialog.showModal(); form.elements.currentPassword.focus(); };
-  root.querySelector('.close-master').onclick = root.querySelector('.cancel-master').onclick = () => dialog.close();
-  form.onsubmit = async event => {
-    event.preventDefault();
-    const data = new FormData(form), currentPassword = data.get('currentPassword'), password = data.get('password'), confirmPassword = data.get('confirmPassword');
-    if (password !== confirmPassword) return setError(form, 'New passwords do not match.');
-    if (password === currentPassword) return setError(form, 'Choose a new password that is different from your current password.');
-    const button = event.submitter;
-    button.disabled = true; button.textContent = 'Changing…';
-    try {
-      await rpc({ type: 'CHANGE_MASTER', currentPassword, password, confirmPassword });
-      form.reset(); dialog.close();
-      changeMaster.textContent = 'Changed ✓';
-      setTimeout(() => { if (changeMaster.isConnected) changeMaster.textContent = 'Change'; }, 2000);
-    } catch (e) { setError(form, e); }
-    finally { button.disabled = false; button.textContent = 'Change password'; }
-  };
+  root.querySelector('.import').onclick = () => chooseCsv(async items => { const existing = await rpc({ type: 'LIST' }); const counts = importCounts(items, existing); if (!confirm(`Import ${counts.newCount} new password${counts.newCount === 1 ? '' : 's'}? ${counts.duplicates} duplicate${counts.duplicates === 1 ? '' : 's'} will be skipped.`)) return; const result = await rpc({ type: 'IMPORT', items }); const status = root.querySelector('.import-result'); status.className = 'import-result notice success'; status.textContent = `${result.added} imported · ${result.duplicates} duplicates skipped. Delete the unencrypted CSV when you no longer need it.`; });
+  root.querySelector('.export').onclick = async () => { const backup = await rpc({ type: 'EXPORT_BACKUP' }); const blob = new Blob([backup], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `passman-${new Date().toISOString().slice(0,10)}.pm`; a.click(); URL.revokeObjectURL(url); };
+  root.querySelector('.restore').onclick = () => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.pm,application/json'; input.onchange = async () => { if (!input.files?.[0]) return; try { await rpc({ type: 'IMPORT_BACKUP', text: await input.files[0].text() }); go('unlock'); } catch (e) { alert(e.message); } }; input.click(); };
+  root.querySelector('.change-master').onclick = () => openMasterDialog();
+}
+
+function openMasterDialog() {
+  const dialog = document.createElement('dialog'); dialog.className = 'master-dialog'; dialog.innerHTML = `<form method="dialog" class="master"><header><h2>Change master password</h2><button class="link close" value="cancel">✕</button></header><label>Current password<input name="current" type="password" required autocomplete="current-password"></label><label>New password<input name="next" type="password" minlength="10" required autocomplete="new-password"></label><label>Confirm new password<input name="confirm" type="password" required autocomplete="new-password"></label><div class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button value="default" class="primary save-master">Change password</button></div></form>`; document.body.append(dialog); dialog.showModal(); dialog.addEventListener('close', () => dialog.remove()); const form = dialog.querySelector('form'); form.onsubmit = async event => { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const data = new FormData(form); if (data.get('next') !== data.get('confirm')) return setError(form, 'New passwords do not match.'); const button = event.submitter; button.disabled = true; button.textContent = 'Changing…'; try { await rpc({ type: 'CHANGE_MASTER', oldPassword: data.get('current'), newPassword: data.get('next') }); dialog.close(); } catch (e) { setError(form, e); button.disabled = false; button.textContent = 'Change password'; } };
 }
 
 async function render() {
+  let status;
+  try { status = await rpc({ type: 'STATUS' }); } catch (e) { root.innerHTML = `<main class="center-card">${notice(e.message, 'error')}</main>`; return; }
+  if (!status.exists) return setupView();
+  if (!status.unlocked) return unlockView();
   const hash = location.hash.slice(1);
-  try {
-    const status = await rpc({ type: 'STATUS' });
-    if (!status.exists) return setupView();
-    if (!status.unlocked) return unlockView();
-    if (hash === 'backup') return backupChoiceView();
-    if (hash === 'settings') return settingsView(); if (hash === 'new') return editView(); if (hash.startsWith('new=')) return editView(null, decodeURIComponent(hash.slice(4))); if (hash.startsWith('edit=')) return editView(hash.slice(5));
-    if (hash.startsWith('site=')) return listView(decodeURIComponent(hash.slice(5)));
-    return listView();
-  } catch (e) { root.innerHTML = `<main class="center-card"><h1>PassMan couldn't open</h1>${notice(e.message, 'error')}<button class="secondary retry">Try again</button></main>`; root.querySelector('.retry').onclick = render; }
+  if (hash === 'backup') return backupChoiceView();
+  if (hash === 'settings') return settingsView();
+  if (hash === 'new') return editView(null, new URLSearchParams(location.search).get('site') || '');
+  if (hash.startsWith('edit=')) return editView(hash.slice(5));
+  return listView(new URLSearchParams(location.search).get('site') || '');
 }
 
 addEventListener('hashchange', render);
