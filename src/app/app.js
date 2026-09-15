@@ -13,11 +13,17 @@ const rpc = globalThis.passmanRpc || (extensionRuntime?.sendMessage
       return r.value;
     }
   : async () => { throw new Error('PassMan platform adapter is unavailable.'); });
+let refreshPromise;
+let lastRefreshAttempt = 0;
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const notice = (text, kind = '') => `<div class="notice ${kind}">${escape(text)}</div>`;
 function setError(form, error) { const el = form.querySelector('.form-error'); if (el) { el.classList.remove('success'); el.textContent = error instanceof Error ? error.message : String(error); } }
-function go(hash) { location.hash = hash; void render(); }
+function go(hash) {
+  const next = hash ? `#${hash}` : '';
+  if (location.hash === next) void render();
+  else location.hash = next;
+}
 
 function alphabetical(a, b) {
   return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
@@ -80,6 +86,20 @@ async function copyText(value, button) {
   const old = button.textContent;
   button.textContent = 'Copied ✓';
   setTimeout(() => { if (button.isConnected) button.textContent = old; }, 1200);
+}
+
+function refreshInBackground(state) {
+  if (refreshPromise || !state.settings?.syncEnabled) return;
+  const now = Date.now();
+  if (now - lastRefreshAttempt < 15_000) return;
+  if (state.unlocked && state.settings.lastSyncAt && now - state.settings.lastSyncAt <= 15_000) return;
+  const message = state.unlocked ? { type: 'SYNC' } : platform === 'extension' && state.exists ? { type: 'REFRESH_METADATA' } : null;
+  if (!message) return;
+  lastRefreshAttempt = now;
+  refreshPromise = rpc(message)
+    .then(() => render(false))
+    .catch(() => {})
+    .finally(() => { refreshPromise = null; });
 }
 
 function setupView() {
@@ -164,8 +184,8 @@ function shell(content, selected = 'passwords') {
   root.querySelectorAll('[data-go]').forEach(button => button.onclick = () => go(button.dataset.go)); root.querySelector('.lock').onclick = async () => { await rpc({ type: 'LOCK' }); go('unlock'); };
 }
 
-async function listView(siteUrl = '') {
-  const items = await rpc({ type: 'LIST' });
+async function listView(siteUrl = '', initialItems) {
+  const items = initialItems || await rpc({ type: 'LIST' });
   const initialQuery = siteUrl ? displayHost(siteUrl) : '';
   shell(`<header class="page-head"><h1>Passwords <span class="password-count">${items.length}</span></h1><button class="primary add">Add password</button></header><input class="page-search" type="search" placeholder="Search passwords…" value="${escape(initialQuery)}" autofocus><section class="credential-list"></section>`);
   const list = root.querySelector('.credential-list'), search = root.querySelector('.page-search');
@@ -193,8 +213,9 @@ async function listView(siteUrl = '') {
   root.querySelector('.add').onclick = () => go('new');
 }
 
-async function editView(id, suggestedUrl = '') {
-  const item = id ? (await rpc({ type: 'LIST' })).find(x => x.id === id) : null;
+async function editView(id, suggestedUrl = '', initialItems) {
+  const items = initialItems || (id ? await rpc({ type: 'LIST' }) : []);
+  const item = id ? items.find(x => x.id === id) : null;
   shell(`<button class="back link">← Passwords</button><div class="editor"><h1>${item ? escape(item.name) : 'Add password'}</h1><form><label>Name<input name="name" value="${escape(item?.name || '')}" required></label><label>Website<input name="url" value="${escape(item?.urls[0] || suggestedUrl)}" placeholder="https://example.com" required></label><label>Username<div class="copy-input"><input name="username" value="${escape(item?.username || '')}" autocomplete="off" required><button type="button" class="copy-username secondary">Copy</button></div></label><label>Password<div class="password-input"><input name="password" value="${escape(item?.password || '')}" type="password" autocomplete="new-password" required><button type="button" class="generate secondary" title="Generate a memorable password">Generate</button><button type="button" class="show secondary">Show</button></div></label><div class="form-error"></div><div class="editor-actions"><button class="primary">Save</button>${item ? '<button type="button" class="danger delete">Delete password</button>' : ''}</div></form></div>`);
   root.querySelector('.back').onclick = () => go(''); const form = root.querySelector('form'); const password = form.elements.password;
   const showButton = root.querySelector('.show');
@@ -238,8 +259,8 @@ function openHintDialog(settings) {
   };
 }
 
-async function settingsView() {
-  const settings = await rpc({ type: 'SETTINGS' });
+async function settingsView(initialSettings) {
+  const settings = initialSettings || await rpc({ type: 'SETTINGS' });
   const syncText = settings.lastSyncError ? escape(settings.lastSyncError) : settings.syncEnabled ? (settings.lastSyncAt ? `Synced ${new Date(settings.lastSyncAt).toLocaleString()}` : 'Connected') : 'Not connected';
   const icon = path => `<span class="settings-icon"><svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg></span>`;
   const reloadLabel = platform === 'web' ? 'When session ends' : 'When Chrome closes';
@@ -274,17 +295,25 @@ function openMasterDialog() {
   const dialog = document.createElement('dialog'); dialog.className = 'master-dialog'; dialog.innerHTML = `<form method="dialog" class="master"><header><h2>Change master password</h2><button class="link close" value="cancel">✕</button></header><label>Current password<input name="current" type="password" required autocomplete="current-password"></label><label>New password<input name="next" type="password" minlength="10" required autocomplete="new-password"></label><label>Confirm new password<input name="confirm" type="password" required autocomplete="new-password"></label><div class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button value="default" class="primary save-master">Change password</button></div></form>`; document.body.append(dialog); dialog.showModal(); dialog.addEventListener('close', () => dialog.remove()); const form = dialog.querySelector('form'); form.onsubmit = async event => { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const data = new FormData(form); if (data.get('next') !== data.get('confirm')) return setError(form, 'New passwords do not match.'); const button = event.submitter; button.disabled = true; button.textContent = 'Changing…'; try { await rpc({ type: 'CHANGE_MASTER', currentPassword: data.get('current'), password: data.get('next'), confirmPassword: data.get('confirm') }); dialog.close(); } catch (e) { setError(form, e); button.disabled = false; button.textContent = 'Change password'; } };
 }
 
-async function render() {
-  let status;
-  try { status = await rpc({ type: 'STATUS' }); } catch (e) { root.innerHTML = `<main class="center-card">${notice(e.message, 'error')}</main>`; return; }
-  if (!status.exists) return setupView();
-  if (!status.unlocked) return unlockView('', status.settings || {});
+async function render(allowRefresh = true) {
+  let state;
+  try { state = await rpc({ type: 'STATE' }); } catch (e) { root.innerHTML = `<main class="center-card">${notice(e.message, 'error')}</main>`; return; }
+  if (!state.exists) return setupView();
+  if (!state.unlocked) {
+    unlockView('', state.settings || {});
+    if (allowRefresh) refreshInBackground(state);
+    return;
+  }
   const hash = location.hash.slice(1);
-  if (hash === 'backup') return backupChoiceView();
-  if (hash === 'settings') return settingsView();
-  if (hash === 'new') return editView(null, new URLSearchParams(location.search).get('site') || '');
-  if (hash.startsWith('edit=')) return editView(hash.slice(5));
-  return listView(new URLSearchParams(location.search).get('site') || '');
+  const site = new URLSearchParams(location.search).get('site') || '';
+  let view;
+  if (hash === 'backup') view = backupChoiceView();
+  else if (hash === 'settings') view = settingsView(state.settings);
+  else if (hash === 'new') view = editView(null, site, state.items);
+  else if (hash.startsWith('edit=')) view = editView(hash.slice(5), '', state.items);
+  else view = listView(site, state.items);
+  if (allowRefresh) refreshInBackground(state);
+  return view;
 }
 
 addEventListener('hashchange', render);
