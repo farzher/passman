@@ -74,6 +74,13 @@ async function handleWebMessage(message) {
     return payload.items;
   }
 
+  if (message.type === 'MARK_USED') {
+    return mutate(payload => {
+      const item = payload.items.find(entry => entry.id === message.id);
+      if (item) item.lastUsedAt = Date.now();
+    });
+  }
+
   if (message.type === 'UPSERT') {
     const input = message.login;
     if (!input?.name || !input.username || !input.password || !Array.isArray(input.urls) || !input.urls.some(parseUrl)) {
@@ -89,7 +96,8 @@ async function handleWebMessage(message) {
         username: input.username,
         password: input.password,
         createdAt: old?.createdAt || now,
-        updatedAt: now
+        updatedAt: now,
+        ...(old?.lastUsedAt ? { lastUsedAt: old.lastUsedAt } : {})
       };
       if (old) Object.assign(old, next);
       else payload.items.push(next);
