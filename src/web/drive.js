@@ -1,5 +1,5 @@
 import { createDriveSync } from '../sync/drive-core.js';
-import { getEnvelope, getSettings, readVault, setEnvelope, setSettings, writeVault } from './store.js';
+import { getEnvelope, getSettings, readVault, setEnvelope, setSettings, workerMessage, writeVault } from './store.js';
 
 const CLIENT_ID = __PASSMAN_GOOGLE_CLIENT_ID__;
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
@@ -7,9 +7,33 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 let accessToken = '';
 let tokenExpiresAt = 0;
 let tokenClient = null;
+let authorizationPromise = null;
+let workerTokenChecked = false;
+let driveConnected = false;
+
+void getSettings().then(settings => { driveConnected = !!settings.syncEnabled; }).catch(() => {});
+void restoreWorkerToken();
 
 function driveConfigured() {
   return !!CLIENT_ID;
+}
+
+function tokenValid() {
+  return !!accessToken && Date.now() < tokenExpiresAt;
+}
+
+function driveResumeNeeded() {
+  return driveConnected && !tokenValid();
+}
+
+function setDriveConnected(value) {
+  driveConnected = !!value;
+}
+
+function authRequired() {
+  const error = new Error('Google Drive authorization is required.');
+  error.code = 'DRIVE_AUTH_REQUIRED';
+  return error;
 }
 
 function requireGoogle() {
@@ -31,27 +55,60 @@ function getTokenClient() {
   return tokenClient;
 }
 
+async function restoreWorkerToken() {
+  if (tokenValid() || workerTokenChecked) return tokenValid();
+  workerTokenChecked = true;
+  const saved = await workerMessage({ type: 'PASSMAN_DRIVE_GET' });
+  if (saved?.token && Number(saved.expiresAt) > Date.now()) {
+    accessToken = saved.token;
+    tokenExpiresAt = Number(saved.expiresAt);
+    return true;
+  }
+  return false;
+}
+
+function rememberToken(token, expiresAt) {
+  accessToken = token;
+  tokenExpiresAt = expiresAt;
+  workerTokenChecked = true;
+  void workerMessage({ type: 'PASSMAN_DRIVE_SET', token, expiresAt });
+}
+
+function clearToken() {
+  accessToken = '';
+  tokenExpiresAt = 0;
+  workerTokenChecked = true;
+  void workerMessage({ type: 'PASSMAN_DRIVE_CLEAR' });
+}
+
 async function authorizeDrive() {
-  if (accessToken && Date.now() < tokenExpiresAt) return accessToken;
+  if (tokenValid()) return accessToken;
+  if (authorizationPromise) return authorizationPromise;
   const client = getTokenClient();
-  return new Promise((resolve, reject) => {
+  authorizationPromise = new Promise((resolve, reject) => {
     client.callback = response => {
       if (response?.error || !response?.access_token) {
         reject(new Error(response?.error_description || response?.error || 'Google authorization was cancelled.'));
         return;
       }
-      accessToken = response.access_token;
-      tokenExpiresAt = Date.now() + Math.max(0, Number(response.expires_in || 0) * 1000 - 60_000);
+      const expiresAt = Date.now() + Math.max(0, Number(response.expires_in || 0) * 1000 - 60_000);
+      rememberToken(response.access_token, expiresAt);
       resolve(accessToken);
     };
     client.error_callback = () => reject(new Error('Google authorization was cancelled.'));
     client.requestAccessToken({ prompt: '' });
   });
+  try {
+    return await authorizationPromise;
+  } finally {
+    authorizationPromise = null;
+  }
 }
 
 async function token(interactive) {
-  if (accessToken && Date.now() < tokenExpiresAt) return accessToken;
-  if (!interactive) throw new Error('Google Drive authorization expired. Use Sync to reconnect.');
+  if (tokenValid()) return accessToken;
+  if (await restoreWorkerToken()) return accessToken;
+  if (!interactive) throw authRequired();
   return authorizeDrive();
 }
 
@@ -59,9 +116,8 @@ async function request(url, init = {}, interactive = false) {
   let value = await token(interactive);
   let response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${value}`, ...init.headers } });
   if (response.status === 401) {
-    accessToken = '';
-    tokenExpiresAt = 0;
-    if (!interactive) return response;
+    clearToken();
+    if (!interactive) throw authRequired();
     value = await authorizeDrive();
     response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${value}`, ...init.headers } });
   }
@@ -70,14 +126,14 @@ async function request(url, init = {}, interactive = false) {
 
 function disconnectDriveToken() {
   const value = accessToken;
-  accessToken = '';
-  tokenExpiresAt = 0;
+  clearToken();
+  driveConnected = false;
   if (value && globalThis.google?.accounts?.oauth2?.revoke) {
     google.accounts.oauth2.revoke(value, () => {});
   }
 }
 
-const { restoreFromDrive, syncNow } = createDriveSync({
+const { refreshMetadata, restoreFromDrive, syncNow } = createDriveSync({
   request,
   getEnvelope,
   getSettings,
@@ -87,4 +143,13 @@ const { restoreFromDrive, syncNow } = createDriveSync({
   writeVault
 });
 
-export { authorizeDrive, disconnectDriveToken, driveConfigured, restoreFromDrive, syncNow };
+export {
+  authorizeDrive,
+  disconnectDriveToken,
+  driveConfigured,
+  driveResumeNeeded,
+  refreshMetadata,
+  restoreFromDrive,
+  setDriveConnected,
+  syncNow
+};
