@@ -5,6 +5,7 @@ const DB_NAME = 'passman-web';
 const STORE_NAME = 'state';
 const VAULT = 'vault';
 const SETTINGS = 'settings';
+const DRIVE_TOKEN = 'drive-token';
 
 let dbPromise;
 let sessionKey = null;
@@ -99,6 +100,23 @@ async function setSettings(patch) {
   return { ...next, passwordHint: String(envelope?.passwordHint?.text || '') };
 }
 
+async function getDriveToken() {
+  const saved = await readValue(DRIVE_TOKEN);
+  if (!saved?.token || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now()) {
+    if (saved) await writeValue(DRIVE_TOKEN, null);
+    return null;
+  }
+  return { token: String(saved.token), expiresAt: saved.expiresAt };
+}
+
+async function setDriveToken(token, expiresAt) {
+  await writeValue(DRIVE_TOKEN, { token: String(token), expiresAt: Number(expiresAt) });
+}
+
+async function clearDriveToken() {
+  await writeValue(DRIVE_TOKEN, null);
+}
+
 async function setSessionKey(key) {
   sessionKey?.fill(0);
   sessionKey = new Uint8Array(key);
@@ -169,11 +187,14 @@ async function writeVault(key, envelope, payload) {
 }
 
 export {
+  clearDriveToken,
   clearSession,
+  getDriveToken,
   getEnvelope,
   getSessionKey,
   getSettings,
   readVault,
+  setDriveToken,
   setEnvelope,
   setSessionKey,
   setSettings,
