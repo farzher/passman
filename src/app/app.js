@@ -129,10 +129,10 @@ function openPasswordExportDialog() {
 
 function openHintDialog(settings) {
   const dialog = document.createElement('dialog'); dialog.className = 'master-dialog';
-  dialog.innerHTML = `<form method="dialog" class="master"><header><h2>Password hint</h2><button class="link close" value="cancel">✕</button></header><p>Stored only on this device so it can be shown while PassMan is locked. Don't include your password.</p><label>Hint<input name="hint" maxlength="160" value="${escape(settings.passwordHint || '')}" placeholder="Something only you will understand" autofocus></label><div class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button>${settings.passwordHint ? '<button type="button" class="link remove-hint">Remove</button>' : ''}<button value="default" class="primary save-hint">Save</button></div></form>`;
+  dialog.innerHTML = `<form method="dialog" class="master"><header><h2>Password hint</h2><button class="link close" value="cancel">✕</button></header><p>Saved with your .pm backup and synced with Google Drive so it is available before unlock. Anyone with the backup can read the hint, so don't include your password.</p><label>Hint<input name="hint" maxlength="160" value="${escape(settings.passwordHint || '')}" placeholder="Something only you will understand" autofocus></label><div class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button>${settings.passwordHint ? '<button type="button" class="link remove-hint">Remove</button>' : ''}<button value="default" class="primary save-hint">Save</button></div></form>`;
   document.body.append(dialog); dialog.showModal(); dialog.addEventListener('close', () => dialog.remove()); const form = dialog.querySelector('form');
-  dialog.querySelector('.remove-hint')?.addEventListener('click', async () => { await rpc({ type: 'SETTINGS', patch: { passwordHint: '' } }); dialog.close(); settingsView(); });
-  form.onsubmit = async event => { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const hint = String(new FormData(form).get('hint') || '').trim(); await rpc({ type: 'SETTINGS', patch: { passwordHint: hint } }); dialog.close(); settingsView(); };
+  dialog.querySelector('.remove-hint')?.addEventListener('click', async () => { await rpc({ type: 'SETTINGS', patch: { passwordHint: '' } }); if (settings.syncEnabled) await rpc({ type: 'SYNC' }).catch(() => {}); dialog.close(); settingsView(); });
+  form.onsubmit = async event => { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const hint = String(new FormData(form).get('hint') || '').trim(); await rpc({ type: 'SETTINGS', patch: { passwordHint: hint } }); if (settings.syncEnabled) await rpc({ type: 'SYNC' }).catch(() => {}); dialog.close(); settingsView(); };
 }
 
 async function settingsView() {
@@ -152,7 +152,7 @@ async function settingsView() {
     </section>
     <section class="settings-card">
       <div class="setting-row">${icon('<rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>')}<div class="setting-copy"><h2>Master password</h2></div><button class="secondary change-master">Change</button></div>
-      <div class="setting-row">${icon('<path d="M9 18h6M10 22h4M8.5 14.5A6 6 0 1 1 15.5 14.5C14.5 15.2 14 16 14 17h-4c0-1-.5-1.8-1.5-2.5Z"></path>')}<div class="setting-copy"><h2>Password hint</h2><small>${settings.passwordHint ? 'Set · This device only' : 'Not set · This device only'}</small></div><button class="secondary edit-hint">${settings.passwordHint ? 'Edit' : 'Set'}</button></div>
+      <div class="setting-row">${icon('<path d="M9 18h6M10 22h4M8.5 14.5A6 6 0 1 1 15.5 14.5C14.5 15.2 14 16 14 17h-4c0-1-.5-1.8-1.5-2.5Z"></path>')}<div class="setting-copy"><h2>Password hint</h2><small>${settings.passwordHint ? 'Set · Saved with backup' : 'Not set'}</small></div><button class="secondary edit-hint">${settings.passwordHint ? 'Edit' : 'Set'}</button></div>
     </section>
   </div>`, 'settings');
   const lock = root.querySelector('.autolock'); lock.value = String(settings.autoLockMinutes); lock.onchange = async () => rpc({ type: 'SETTINGS', patch: { autoLockMinutes: Number(lock.value) } });
