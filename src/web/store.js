@@ -74,19 +74,31 @@ async function setEnvelope(envelope) {
 }
 
 async function getSettings() {
-  const stored = await readValue(SETTINGS) || {};
+  let stored = await readValue(SETTINGS) || {};
   if (stored.webSettingsVersion !== WEB_SETTINGS_VERSION) {
-    const migrated = { ...stored, webSettingsVersion: WEB_SETTINGS_VERSION };
+    stored = { ...stored, webSettingsVersion: WEB_SETTINGS_VERSION };
     if (stored.webSettingsVersion === 1 && stored.autoLockMinutes === 60) {
-      migrated.autoLockMinutes = DEFAULT_SETTINGS.autoLockMinutes;
+      stored.autoLockMinutes = DEFAULT_SETTINGS.autoLockMinutes;
     }
-    await writeValue(SETTINGS, migrated);
-    return { ...DEFAULT_SETTINGS, ...migrated };
+    await writeValue(SETTINGS, stored);
   }
-  return { ...DEFAULT_SETTINGS, ...stored };
+  let envelope = await getEnvelope();
+  const legacyHint = String(stored.passwordHint || '').trim();
+  if (envelope && !envelope.passwordHint && legacyHint) {
+    envelope = { ...envelope, passwordHint: { text: legacyHint.slice(0, 160), updatedAt: Date.now() } };
+    await setEnvelope(envelope);
+  }
+  return { ...DEFAULT_SETTINGS, ...stored, passwordHint: String(envelope?.passwordHint?.text ?? legacyHint) };
 }
 
 async function setSettings(patch) {
+  if (Object.prototype.hasOwnProperty.call(patch, 'passwordHint')) {
+    const envelope = await getEnvelope();
+    if (envelope) {
+      const text = String(patch.passwordHint || '').trim().slice(0, 160);
+      await setEnvelope({ ...envelope, passwordHint: { text, updatedAt: Date.now() } });
+    }
+  }
   const settings = { ...await getSettings(), ...patch };
   await writeValue(SETTINGS, settings);
   return settings;
