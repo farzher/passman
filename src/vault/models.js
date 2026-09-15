@@ -1,4 +1,4 @@
-const DEFAULT_SETTINGS = { autoLockMinutes: 15, syncEnabled: false };
+const DEFAULT_SETTINGS = { autoLockMinutes: -1, syncEnabled: false };
 export {
   DEFAULT_SETTINGS
 };
