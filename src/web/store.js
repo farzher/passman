@@ -72,6 +72,10 @@ async function clearSession() {
   touched = 0;
 }
 
+function touchSession() {
+  if (sessionKey) touched = Date.now();
+}
+
 async function getSessionKey(touch = true) {
   if (!sessionKey) throw new Error('PassMan is locked.');
   const settings = await getSettings();
@@ -106,5 +110,6 @@ export {
   setEnvelope,
   setSessionKey,
   setSettings,
+  touchSession,
   writeVault
 };
