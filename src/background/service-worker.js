@@ -40,8 +40,6 @@ function publicItems(payload, url) {
 function assessLogin(payload, page, username, password) {
   const siteItems = payload.items.filter(item => loginMatchesUrl(item.urls, page));
   const named = username && siteItems.find(item => item.username.trim().toLowerCase() === username.toLowerCase());
-  // Older versions could save a generated password before a later signup step
-  // supplied the username. Treat that as the same login, not a second account.
   const incomplete = username && !named && siteItems.find(item => !item.username.trim() && item.password === password);
   const found = named || incomplete || (!username && siteItems.length === 1 ? siteItems[0] : undefined);
   if (!found) return { action: "save", username };
@@ -89,14 +87,24 @@ async function handle(message, sender) {
     return publicItems(payload, page);
   }
   if (message.type === "GET_CREDENTIAL") {
-    const { payload } = await readVault();
-    const item = payload.items.find((i) => i.id === message.id);
-    if (!item || !loginMatchesUrl(item.urls, page)) throw new Error("That login is not valid for this site.");
-    return { id: item.id, username: item.username, password: item.password };
+    let credential;
+    await mutate((payload) => {
+      const item = payload.items.find((i) => i.id === message.id);
+      if (!item || !loginMatchesUrl(item.urls, page)) throw new Error("That login is not valid for this site.");
+      item.lastUsedAt = Date.now();
+      credential = { id: item.id, username: item.username, password: item.password };
+    });
+    return credential;
   }
   if (message.type === "LIST") {
     const { payload } = await readVault();
     return payload.items;
+  }
+  if (message.type === "MARK_USED") {
+    return mutate((payload) => {
+      const item = payload.items.find((entry) => entry.id === message.id);
+      if (item) item.lastUsedAt = Date.now();
+    });
   }
   if (message.type === "UPSERT") {
     const input = message.login;
