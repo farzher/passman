@@ -44,6 +44,10 @@ async function writeValue(key, value) {
   });
 }
 
+function settingsFrom(stored, envelope) {
+  return { ...DEFAULT_SETTINGS, ...(stored || {}), passwordHint: String(envelope?.passwordHint?.text || '') };
+}
+
 async function workerSession(message) {
   if (!('serviceWorker' in navigator)) return null;
   try {
@@ -73,26 +77,25 @@ async function setEnvelope(envelope) {
 }
 
 async function getSettings() {
-  const stored = await readValue(SETTINGS) || {};
-  const envelope = await getEnvelope();
-  return { ...DEFAULT_SETTINGS, ...stored, passwordHint: String(envelope?.passwordHint?.text || '') };
+  const [stored, envelope] = await Promise.all([readValue(SETTINGS), readValue(VAULT)]);
+  return settingsFrom(stored, envelope);
 }
 
 async function setSettings(patch) {
-  const stored = await readValue(SETTINGS) || {};
-  const next = { ...DEFAULT_SETTINGS, ...stored, ...patch };
+  const [stored, currentEnvelope] = await Promise.all([readValue(SETTINGS), readValue(VAULT)]);
+  const next = { ...DEFAULT_SETTINGS, ...(stored || {}), ...patch };
+  let envelope = currentEnvelope;
 
-  if (Object.prototype.hasOwnProperty.call(patch, 'passwordHint')) {
-    const envelope = await getEnvelope();
-    if (envelope) {
-      const text = String(patch.passwordHint || '').trim().slice(0, 160);
-      await setEnvelope({ ...envelope, passwordHint: { text, updatedAt: Date.now() } });
-    }
+  if (Object.prototype.hasOwnProperty.call(patch, 'passwordHint') && envelope) {
+    const text = String(patch.passwordHint || '').trim().slice(0, 160);
+    envelope = { ...envelope, passwordHint: { text, updatedAt: Date.now() } };
   }
 
   delete next.passwordHint;
-  await writeValue(SETTINGS, next);
-  const envelope = await getEnvelope();
+  const writes = [writeValue(SETTINGS, next)];
+  if (envelope !== currentEnvelope) writes.push(writeValue(VAULT, envelope));
+  await Promise.all(writes);
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoLockMinutes') && next.autoLockMinutes > 0 && sessionKey) touchSession();
   return { ...next, passwordHint: String(envelope?.passwordHint?.text || '') };
 }
 
@@ -128,9 +131,9 @@ function touchSession() {
   }
 }
 
-async function getSessionKey(touch = true) {
-  const settings = await getSettings();
-  const maxAgeMs = settings.autoLockMinutes > 0 ? settings.autoLockMinutes * 60_000 : 0;
+async function getSessionKey(touch = true, settings) {
+  const resolvedSettings = settings || await getSettings();
+  const maxAgeMs = resolvedSettings.autoLockMinutes > 0 ? resolvedSettings.autoLockMinutes * 60_000 : 0;
 
   if (!sessionKey) {
     const restored = await workerSession({ type: 'PASSMAN_SESSION_GET', maxAgeMs });
@@ -152,15 +155,15 @@ async function getSessionKey(touch = true) {
 }
 
 async function readVault() {
-  const envelope = await getEnvelope();
+  const [envelope, stored] = await Promise.all([readValue(VAULT), readValue(SETTINGS)]);
   if (!envelope) throw new Error('PassMan is not set up.');
-  const key = await getSessionKey();
-  return { key, envelope, payload: await decryptPayload(key, envelope) };
+  const settings = settingsFrom(stored, envelope);
+  const key = await getSessionKey(true, settings);
+  return { key, envelope, settings, payload: await decryptPayload(key, envelope) };
 }
 
 async function writeVault(key, envelope, payload) {
   const next = await replacePayload(key, envelope, payload);
-  await decryptPayload(key, next);
   await setEnvelope(next);
   return next;
 }
