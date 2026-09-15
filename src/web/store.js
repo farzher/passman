@@ -5,8 +5,7 @@ const DB_NAME = 'passman-web';
 const STORE_NAME = 'state';
 const VAULT = 'vault';
 const SETTINGS = 'settings';
-const WEB_SETTINGS_VERSION = 1;
-const WEB_DEFAULT_AUTO_LOCK_MINUTES = 60;
+const WEB_SETTINGS_VERSION = 2;
 
 let dbPromise;
 let sessionKey = null;
@@ -55,17 +54,14 @@ async function setEnvelope(envelope) {
 async function getSettings() {
   const stored = await readValue(SETTINGS) || {};
   if (stored.webSettingsVersion !== WEB_SETTINGS_VERSION) {
-    const migrated = {
-      ...stored,
-      webSettingsVersion: WEB_SETTINGS_VERSION,
-      autoLockMinutes: stored.autoLockMinutes === undefined || stored.autoLockMinutes === DEFAULT_SETTINGS.autoLockMinutes
-        ? WEB_DEFAULT_AUTO_LOCK_MINUTES
-        : stored.autoLockMinutes
-    };
+    const migrated = { ...stored, webSettingsVersion: WEB_SETTINGS_VERSION };
+    if (stored.webSettingsVersion === 1 && stored.autoLockMinutes === 60) {
+      migrated.autoLockMinutes = DEFAULT_SETTINGS.autoLockMinutes;
+    }
     await writeValue(SETTINGS, migrated);
     return { ...DEFAULT_SETTINGS, ...migrated };
   }
-  return { ...DEFAULT_SETTINGS, autoLockMinutes: WEB_DEFAULT_AUTO_LOCK_MINUTES, ...stored };
+  return { ...DEFAULT_SETTINGS, ...stored };
 }
 
 async function setSettings(patch) {
