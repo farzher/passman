@@ -68,8 +68,12 @@ async function render() {
       const copy = row.querySelector('.copy-password');
       copy.onclick = async event => {
         event.stopPropagation(); fillError.textContent = '';
-        try { await copyText(item.password); copy.classList.add('copied'); copy.title = 'Password copied'; copy.setAttribute('aria-label', 'Password copied'); setTimeout(() => { copy.classList.remove('copied'); copy.title = 'Copy password'; copy.setAttribute('aria-label', 'Copy password'); }, 1500); }
-        catch { fillError.textContent = 'Could not copy the password.'; }
+        try {
+          await copyText(item.password);
+          await rpc({ type: 'MARK_USED', id: item.id });
+          copy.classList.add('copied'); copy.title = 'Password copied'; copy.setAttribute('aria-label', 'Password copied');
+          setTimeout(() => { copy.classList.remove('copied'); copy.title = 'Copy password'; copy.setAttribute('aria-label', 'Copy password'); }, 1500);
+        } catch { fillError.textContent = 'Could not copy the password.'; }
       };
       row.onclick = async () => {
         fillError.textContent = ''; row.setAttribute('aria-disabled', 'true');
