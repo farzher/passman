@@ -206,7 +206,7 @@ async function settingsView() {
     </section>
     <section class="settings-card">
       <div class="setting-row">${icon('<rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>')}<div class="setting-copy"><h2>Master password</h2></div><button class="secondary change-master">Change</button></div>
-      <div class="setting-row">${icon('<path d="M9 18h6M10 22h4M8.5 14.5A6 6 0 1 1 15.5 14.5C14.5 15.2 14 16 14 17h-4c0-1-.5-1.8-1.5-2.5Z"></path>')}<div class="setting-copy"><h2>Password hint</h2><small>${settings.passwordHint ? 'Set · Saved with backup' : 'Not set'}</small></div><button class="secondary edit-hint">${settings.passwordHint ? 'Edit' : 'Set'}</button></div>
+      <div class="setting-row">${icon('<path d="M9 18h6M10 22h4M8.5 14.5A6 6 0 1 1 15.5 14.5C14.5 15.2 14 16 14 17h-4c0-1-.5-1.8-1.5-2.5Z"></path>')}<div class="setting-copy"><h2>Password hint</h2></div><button class="secondary edit-hint">${settings.passwordHint ? 'Edit' : 'Set'}</button></div>
     </section>
   </div>`, 'settings');
   const lock = root.querySelector('.autolock'); lock.value = String(settings.autoLockMinutes); lock.onchange = async () => rpc({ type: 'SETTINGS', patch: { autoLockMinutes: Number(lock.value) } });
