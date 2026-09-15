@@ -1,15 +1,13 @@
-import { assertEnvelope, decryptPayload } from "../crypto/vault-crypto";
-import { getSettings, readVault, setEnvelope, setSettings, writeVault } from "../vault/store";
-import { mergeVaults, snapshot } from "./merge";
-const API = "https://www.googleapis.com/drive/v3";
-const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
-const DRIVE_NAME = 'passman.pm';
+import { createDriveSync } from './drive-core.js';
+import { getSettings, readVault, setEnvelope, setSettings, writeVault } from '../vault/store.js';
+
 async function token(interactive) {
   const result = await chrome.identity.getAuthToken({ interactive });
-  const value = typeof result === "string" ? result : result.token;
-  if (!value) throw new Error("Google authorization was cancelled.");
+  const value = typeof result === 'string' ? result : result.token;
+  if (!value) throw new Error('Google authorization was cancelled.');
   return value;
 }
+
 async function request(url, init = {}, interactive = false) {
   let accessToken = await token(interactive);
   let response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${accessToken}`, ...init.headers } });
@@ -20,106 +18,14 @@ async function request(url, init = {}, interactive = false) {
   }
   return response;
 }
-async function checked(response) {
-  if (!response.ok) throw new Error(`Google Drive error (${response.status}).`);
-  return response;
-}
-async function findDriveVault(interactive = false) {
-  const q = encodeURIComponent(`name='${DRIVE_NAME}' and 'appDataFolder' in parents and trashed=false`);
-  const response = await checked(await request(`${API}/files?spaces=appDataFolder&q=${q}&fields=files(id,version,modifiedTime)&pageSize=1`, {}, interactive));
-  return (await response.json()).files[0] || null;
-}
-async function downloadDriveVault(file, interactive = false) {
-  const response = await checked(await request(`${API}/files/${file.id}?alt=media`, {}, interactive));
-  const envelope = await response.json();
-  assertEnvelope(envelope);
-  return { envelope, etag: response.headers.get("etag") || void 0, file };
-}
-async function upload(envelope, file, etag) {
-  let response;
-  if (file) {
-    response = await request(`${UPLOAD}/files/${file.id}?uploadType=media&fields=id,version,modifiedTime`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", ...etag ? { "If-Match": etag } : {} },
-      body: JSON.stringify(envelope)
-    });
-  } else {
-    const boundary = `passman_${crypto.randomUUID()}`;
-    const body = `--${boundary}\r
-Content-Type: application/json; charset=UTF-8\r
-\r
-${JSON.stringify({ name: DRIVE_NAME, parents: ["appDataFolder"] })}\r
---${boundary}\r
-Content-Type: application/json\r
-\r
-${JSON.stringify(envelope)}\r
---${boundary}--`;
-    response = await request(`${UPLOAD}/files?uploadType=multipart&fields=id,version,modifiedTime`, {
-      method: "POST",
-      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
-      body
-    });
-  }
-  if (response.status === 412) throw new Error("DRIVE_CONFLICT");
-  await checked(response);
-  return response.json();
-}
-async function restoreFromDrive() {
-  const file = await findDriveVault(true);
-  if (!file) throw new Error("No PassMan backup was found in this Google account.");
-  const remote = await downloadDriveVault(file, true);
-  await setEnvelope(remote.envelope);
-  await setSettings({ syncEnabled: true, driveFileId: file.id, driveVersion: file.version, driveEtag: remote.etag });
-  return remote.envelope;
-}
-async function syncNow(interactive = false) {
-  const settings = await getSettings();
-  if (!settings.syncEnabled) return;
-  try {
-    let { key, envelope, payload } = await readVault();
-    let file = await findDriveVault(interactive);
-    if (!file) {
-      payload.syncBase = snapshot(payload);
-      envelope = await writeVault(key, envelope, payload);
-      file = await upload(envelope);
-      await setSettings({ driveFileId: file.id, driveVersion: file.version, lastSyncAt: Date.now(), lastSyncError: void 0 });
-      return;
-    }
-    const remote = await downloadDriveVault(file, interactive);
-    if (!settings.driveVersion) {
-      throw new Error('A PassMan vault already exists in this Google account. Restore it from the welcome screen instead of replacing it.');
-    }
-    if (settings.driveVersion !== file.version) {
-      const remotePayload = await decryptPayload(key, remote.envelope);
-      payload = mergeVaults(payload, remotePayload);
-      envelope = await writeVault(key, envelope, payload);
-    } else if (!payload.syncBase) {
-      payload.syncBase = snapshot(payload);
-      envelope = await writeVault(key, envelope, payload);
-    }
-    try {
-      file = await upload(envelope, file, remote.etag);
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "DRIVE_CONFLICT") throw error;
-      const latestFile = await findDriveVault(interactive);
-      if (!latestFile) throw error;
-      const latest = await downloadDriveVault(latestFile, interactive);
-      payload = mergeVaults(payload, await decryptPayload(key, latest.envelope));
-      envelope = await writeVault(key, envelope, payload);
-      file = await upload(envelope, latestFile, latest.etag);
-    }
-    payload.syncBase = snapshot(payload);
-    envelope = await writeVault(key, envelope, payload);
-    file = await upload(envelope, file);
-    await setSettings({ driveFileId: file.id, driveVersion: file.version, lastSyncAt: Date.now(), lastSyncError: void 0 });
-  } catch (error) {
-    await setSettings({ lastSyncError: error instanceof Error ? error.message : String(error) });
-    throw error;
-  }
-}
-export {
-  downloadDriveVault,
-  findDriveVault,
-  restoreFromDrive,
-  syncNow
-};
+
+const { downloadDriveVault, findDriveVault, restoreFromDrive, syncNow } = createDriveSync({
+  request,
+  getSettings,
+  readVault,
+  setEnvelope,
+  setSettings,
+  writeVault
+});
+
+export { downloadDriveVault, findDriveVault, restoreFromDrive, syncNow };
