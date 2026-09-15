@@ -83,9 +83,10 @@ async function copyText(value, button) {
 }
 
 function setupView() {
-  root.innerHTML = `<main class="center-card onboarding"><div class="brand">P</div><h1>Welcome to PassMan</h1><p>Create a master password</p><form><label>Master password<input name="password" type="password" minlength="10" required autofocus></label><label>Confirm password<input name="confirm" type="password" required></label><label>Password hint <span style="font-weight:400;color:var(--muted)">(optional)</span><input name="hint" maxlength="160" placeholder="Something only you will understand"></label><div class="form-error"></div><button class="primary wide">Continue</button></form><div class="or"><span>or</span></div><button class="secondary wide restore">Restore from Google Drive</button><div class="form-error"></div></main>`;
+  root.innerHTML = `<main class="center-card onboarding"><div class="brand">P</div><h1>Welcome to PassMan</h1><p>Create a master password</p><form><label>Master password<input name="password" type="password" minlength="10" required autofocus></label><label>Confirm password<input name="confirm" type="password" required></label><label>Password hint <span style="font-weight:400;color:var(--muted)">(optional)</span><input name="hint" maxlength="160" placeholder="Something only you will understand"></label><div class="form-error"></div><button class="primary wide">Continue</button></form><div class="or"><span>or</span></div><button class="secondary wide restore-drive">Restore from Google Drive</button><button class="secondary wide restore-file">Restore .pm backup</button><div class="form-error"></div></main>`;
   const form = root.querySelector('form'); form.onsubmit = async event => { event.preventDefault(); const data = new FormData(form); if (data.get('password') !== data.get('confirm')) return setError(form, 'Passwords do not match.'); const button = event.submitter; button.disabled = true; button.textContent = 'Creating securely…'; try { await rpc({ type: 'SETUP', password: data.get('password') }); const hint = String(data.get('hint') || '').trim(); if (hint) await rpc({ type: 'SETTINGS', patch: { passwordHint: hint } }); go('backup'); } catch (e) { setError(form, e); button.disabled = false; button.textContent = 'Continue'; } };
-  root.querySelector('.restore').onclick = async event => { event.target.disabled = true; event.target.textContent = 'Connecting…'; try { await rpc({ type: 'RESTORE_DRIVE' }); go('unlock'); } catch (e) { event.target.disabled = false; event.target.textContent = 'Restore from Google Drive'; root.querySelector('.form-error').textContent = e.message; } };
+  root.querySelector('.restore-drive').onclick = async event => { event.target.disabled = true; event.target.textContent = 'Connecting…'; try { await rpc({ type: 'RESTORE_DRIVE' }); go('unlock'); } catch (e) { event.target.disabled = false; event.target.textContent = 'Restore from Google Drive'; root.querySelector('.form-error').textContent = e.message; } };
+  root.querySelector('.restore-file').onclick = () => chooseBackup(openBackupRestoreDialog);
 }
 
 function unlockView(error = '', settings = {}) {
@@ -101,6 +102,41 @@ function unlockView(error = '', settings = {}) {
 function chooseCsv(onParsed) {
   const input = document.createElement('input'); input.type = 'file'; input.accept = '.csv,text/csv';
   input.onchange = async () => { if (!input.files?.[0]) return; try { onParsed(parseChromeCsv(await input.files[0].text())); } catch (e) { alert(e.message); } }; input.click();
+}
+
+function chooseBackup(onParsed) {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.pm,application/json';
+  input.onchange = async () => {
+    if (!input.files?.[0]) return;
+    try { onParsed(JSON.parse(await input.files[0].text())); }
+    catch { alert('Invalid PassMan backup.'); }
+  };
+  input.click();
+}
+
+function openBackupRestoreDialog(envelope) {
+  const hint = String(envelope?.passwordHint?.text || '').trim();
+  const dialog = document.createElement('dialog'); dialog.className = 'master-dialog';
+  dialog.innerHTML = `<form method="dialog" class="master"><header><h2>Restore backup</h2><button class="link close" value="cancel">✕</button></header><input name="password" type="password" placeholder="Master password" aria-label="Master password" autocomplete="current-password" autofocus required>${hint ? '<button type="button" class="link show-backup-hint">Show password hint</button><p class="hint backup-hint" hidden></p>' : ''}<div class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button value="default" class="primary">Restore</button></div></form>`;
+  document.body.append(dialog); dialog.showModal(); dialog.addEventListener('close', () => dialog.remove()); const form = dialog.querySelector('form');
+  if (hint) {
+    const button = dialog.querySelector('.show-backup-hint'), text = dialog.querySelector('.backup-hint');
+    button.onclick = () => { text.textContent = hint; text.hidden = false; button.hidden = true; };
+  }
+  form.onsubmit = async event => {
+    if (event.submitter?.value === 'cancel') return;
+    event.preventDefault();
+    const button = event.submitter; button.disabled = true; button.textContent = 'Restoring…';
+    try {
+      await rpc({ type: 'IMPORT_BACKUP', envelope, password: new FormData(form).get('password') });
+      dialog.close();
+      go('');
+    } catch (e) {
+      setError(form, e);
+      button.disabled = false;
+      button.textContent = 'Restore';
+    }
+  };
 }
 
 function importCounts(items, existing) {
@@ -224,8 +260,8 @@ async function settingsView() {
   root.querySelector('.disconnect')?.addEventListener('click', async () => { await rpc({ type: 'DISCONNECT_DRIVE' }); settingsView(); });
   root.querySelector('.import').onclick = () => chooseCsv(async items => { const existing = await rpc({ type: 'LIST' }); const counts = importCounts(items, existing); if (!confirm(`Import ${counts.newCount} new password${counts.newCount === 1 ? '' : 's'}? ${counts.duplicates} duplicate${counts.duplicates === 1 ? '' : 's'} will be skipped.`)) return; const result = await rpc({ type: 'IMPORT', items }); const status = root.querySelector('.import-result'); status.className = 'import-result notice success'; status.textContent = `${result.added} imported · ${result.duplicates} duplicates skipped. Delete the unencrypted CSV when you no longer need it.`; });
   root.querySelector('.export-passwords').onclick = openPasswordExportDialog;
-  root.querySelector('.export').onclick = async () => { const backup = await rpc({ type: 'EXPORT_BACKUP' }); const blob = new Blob([backup], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `passman-${new Date().toISOString().slice(0,10)}.pm`; a.click(); URL.revokeObjectURL(url); };
-  root.querySelector('.restore').onclick = () => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.pm,application/json'; input.onchange = async () => { if (!input.files?.[0]) return; try { await rpc({ type: 'IMPORT_BACKUP', text: await input.files[0].text() }); go('unlock'); } catch (e) { alert(e.message); } }; input.click(); };
+  root.querySelector('.export').onclick = async () => { const backup = await rpc({ type: 'EXPORT_BACKUP' }); download(`passman-${new Date().toISOString().slice(0,10)}.pm`, JSON.stringify(backup), 'application/json'); };
+  root.querySelector('.restore').onclick = () => chooseBackup(openBackupRestoreDialog);
   root.querySelector('.change-master').onclick = () => openMasterDialog();
   root.querySelector('.edit-hint').onclick = () => openHintDialog(settings);
 }
