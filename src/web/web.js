@@ -1,5 +1,5 @@
 import { handleWebMessage } from './controller.js';
-import { driveConfigured, driveResumeNeeded } from './drive.js';
+import { driveConfigured } from './drive.js';
 import { touchSession } from './store.js';
 
 globalThis.passmanPlatform = 'web';
@@ -7,30 +7,10 @@ globalThis.passmanDriveConfigured = driveConfigured();
 globalThis.passmanRpc = handleWebMessage;
 
 let lastActivity = Date.now();
-let driveResumePromise = null;
-
-function resumeDriveFromGesture(event) {
-  if (driveResumePromise || !driveResumeNeeded()) return;
-  const target = event.target;
-  if (target instanceof Element) {
-    if (target.closest('.connect,.sync,.disconnect')) return;
-    if (target.matches('input,textarea,select,[contenteditable="true"]')) return;
-  }
-  driveResumePromise = handleWebMessage({ type: 'RESUME_DRIVE' })
-    .then(resumed => {
-      if (resumed && (!location.hash || location.hash === '#settings')) {
-        dispatchEvent(new HashChangeEvent('hashchange'));
-      }
-    })
-    .catch(() => {})
-    .finally(() => { driveResumePromise = null; });
-}
-
 for (const event of ['pointerdown', 'keydown', 'touchstart']) {
-  addEventListener(event, input => {
+  addEventListener(event, () => {
     lastActivity = Date.now();
     touchSession();
-    resumeDriveFromGesture(input);
   }, { passive: true });
 }
 
