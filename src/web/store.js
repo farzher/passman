@@ -76,8 +76,9 @@ async function setEnvelope(envelope) {
 async function getSettings() {
   let stored = await readValue(SETTINGS) || {};
   if (stored.webSettingsVersion !== WEB_SETTINGS_VERSION) {
+    const previousVersion = stored.webSettingsVersion;
     stored = { ...stored, webSettingsVersion: WEB_SETTINGS_VERSION };
-    if (stored.webSettingsVersion === 1 && stored.autoLockMinutes === 60) {
+    if (previousVersion === 1 && stored.autoLockMinutes === 60) {
       stored.autoLockMinutes = DEFAULT_SETTINGS.autoLockMinutes;
     }
     await writeValue(SETTINGS, stored);
