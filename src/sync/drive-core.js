@@ -14,7 +14,7 @@ function mergeHint(local, remote) {
   return { ...local, passwordHint: { text: String(b?.text || '').slice(0, 160), updatedAt: bt } };
 }
 
-function createDriveSync({ request, getSettings, readVault, setEnvelope, setSettings, writeVault }) {
+function createDriveSync({ request, getEnvelope, getSettings, readVault, setEnvelope, setSettings, writeVault }) {
   async function checked(response) {
     if (!response.ok) throw new Error(`Google Drive error (${response.status}).`);
     return response;
@@ -70,6 +70,20 @@ ${JSON.stringify(envelope)}\r
     await setEnvelope(remote.envelope);
     await setSettings({ syncEnabled: true, driveFileId: file.id, driveVersion: file.version, driveEtag: remote.etag, lastSyncError: undefined });
     return remote.envelope;
+  }
+
+  async function refreshMetadata(interactive = false) {
+    const settings = await getSettings();
+    if (!settings.syncEnabled) return false;
+    const local = await getEnvelope();
+    if (!local) return false;
+    const file = await findDriveVault(interactive);
+    if (!file) return false;
+    const remote = await downloadDriveVault(file, interactive);
+    const merged = mergeHint(local, remote.envelope);
+    if (merged === local) return false;
+    await setEnvelope(merged);
+    return true;
   }
 
   async function syncNow(interactive = false) {
@@ -128,7 +142,7 @@ ${JSON.stringify(envelope)}\r
     }
   }
 
-  return { downloadDriveVault, findDriveVault, restoreFromDrive, syncNow };
+  return { downloadDriveVault, findDriveVault, refreshMetadata, restoreFromDrive, syncNow };
 }
 
 export { createDriveSync };
