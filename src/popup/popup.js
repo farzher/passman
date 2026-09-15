@@ -25,7 +25,19 @@ async function loadPageContext() {
 }
 function unlockView(error = '') {
   app.innerHTML = `<form class="unlock"><input name="password" type="password" placeholder="Master password" aria-label="Master password" autofocus required><div class="error">${esc(error)}</div><button class="primary" type="submit">Unlock</button></form>`;
-  app.querySelector('form').onsubmit = async event => { event.preventDefault(); const button = event.submitter; button.disabled = true; button.textContent = 'Unlocking…'; try { await rpc({ type: 'UNLOCK', password: new FormData(event.target).get('password') }); await render(); } catch (e) { unlockView(e.message); } };
+  app.querySelector('form').onsubmit = async event => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    button.textContent = 'Unlocking…';
+    try {
+      await rpc({ type: 'UNLOCK', password: new FormData(event.target).get('password') });
+      await rpc({ type: 'SYNC' }).catch(() => {});
+      await render();
+    } catch (e) {
+      unlockView(e.message);
+    }
+  };
 }
 async function render() {
   try {
@@ -34,6 +46,9 @@ async function render() {
     document.querySelector('#add').hidden = !status.unlocked;
     if (!status.exists) { app.innerHTML = `<div class="empty"><div class="lock-mark">P</div><h2>Welcome to PassMan</h2><p>Create your encrypted password store to get started.</p><button class="primary start">Get started</button></div>`; app.querySelector('.start').onclick = () => chrome.tabs.create({ url: appUrl('#onboarding') }); return; }
     if (!status.unlocked) return unlockView();
+    if (status.settings.syncEnabled && (!status.settings.lastSyncAt || Date.now() - status.settings.lastSyncAt > 15_000)) {
+      await rpc({ type: 'SYNC' }).catch(() => {});
+    }
     const [items, tab] = await Promise.all([rpc({ type: 'LIST' }), contextTab ? Promise.resolve(contextTab) : activeTab()]);
     const pageUrl = /^https?:/i.test(tab?.url || '') ? tab.url : '';
     const host = pageUrl ? displayHost(pageUrl) : '';
