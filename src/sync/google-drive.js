@@ -1,5 +1,5 @@
 import { createDriveSync } from './drive-core.js';
-import { getSettings, readVault, setEnvelope, setSettings, writeVault } from '../vault/store.js';
+import { getEnvelope, getSettings, readVault, setEnvelope, setSettings, writeVault } from '../vault/store.js';
 
 async function token(interactive) {
   const result = await chrome.identity.getAuthToken({ interactive });
@@ -19,8 +19,9 @@ async function request(url, init = {}, interactive = false) {
   return response;
 }
 
-const { downloadDriveVault, findDriveVault, restoreFromDrive, syncNow } = createDriveSync({
+const { downloadDriveVault, findDriveVault, refreshMetadata, restoreFromDrive, syncNow } = createDriveSync({
   request,
+  getEnvelope,
   getSettings,
   readVault,
   setEnvelope,
@@ -28,4 +29,4 @@ const { downloadDriveVault, findDriveVault, restoreFromDrive, syncNow } = create
   writeVault
 });
 
-export { downloadDriveVault, findDriveVault, restoreFromDrive, syncNow };
+export { downloadDriveVault, findDriveVault, refreshMetadata, restoreFromDrive, syncNow };
