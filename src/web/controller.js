@@ -181,7 +181,7 @@ async function handleWebMessage(message) {
   }
 
   if (message.type === 'DISCONNECT_DRIVE') {
-    disconnectDriveToken();
+    await disconnectDriveToken();
     await setSettings({ syncEnabled: false, lastSyncError: undefined });
     return true;
   }
@@ -201,8 +201,7 @@ async function handleWebMessage(message) {
 
   if (message.type === 'RESUME_DRIVE') {
     if (!driveResumeNeeded()) return false;
-    const authorization = authorizeDrive();
-    await authorization;
+    await authorizeDrive();
     let unlocked = false;
     try {
       const key = await getSessionKey(false);
