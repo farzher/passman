@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "PassMan",
+  "version": "0.1.0",
+  "description": "A small, encrypted password manager.",
+  "minimum_chrome_version": "102",
+  "permissions": ["storage", "activeTab", "identity", "alarms", "favicon"],
+  "host_permissions": ["https://www.googleapis.com/*"],
+  "background": { "service_worker": "dist/background/service-worker.js", "type": "module" },
+  "icons": {
+    "16": "dist/icons/icon-16.png",
+    "32": "dist/icons/icon-32.png",
+    "48": "dist/icons/icon-48.png",
+    "128": "dist/icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "dist/popup/popup.html",
+    "default_title": "PassMan",
+    "default_icon": {
+      "16": "dist/icons/icon-16.png",
+      "32": "dist/icons/icon-32.png"
+    }
+  },
+  "options_page": "dist/app/app.html",
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["dist/content/autofill.js"],
+    "run_at": "document_idle",
+    "all_frames": false,
+    "match_about_blank": false
+  }],
+  "web_accessible_resources": [{
+    "resources": ["_favicon/*"],
+    "matches": ["http://*/*", "https://*/*"]
+  }],
+  "oauth2": {
+    "client_id": "805252227313-et9g8na08dhmd99uis4l0u7ae6m00rl1.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.appdata"]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
