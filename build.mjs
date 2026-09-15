@@ -3,6 +3,31 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 const mode = process.argv[2] || 'all';
 
+async function assertPng(path, expectedWidth, expectedHeight) {
+  const bytes = await readFile(path);
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (bytes.length < 8 || !bytes.subarray(0, 8).equals(signature)) throw new Error(`${path} is not a valid PNG.`);
+
+  let offset = 8, width, height, ended = false;
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    const next = offset + 12 + length;
+    if (next > bytes.length) throw new Error(`${path} is truncated.`);
+    if (type === 'IHDR') {
+      if (length !== 13) throw new Error(`${path} has an invalid PNG header.`);
+      width = bytes.readUInt32BE(offset + 8);
+      height = bytes.readUInt32BE(offset + 12);
+    }
+    offset = next;
+    if (type === 'IEND') { ended = true; break; }
+  }
+  if (!ended || offset !== bytes.length) throw new Error(`${path} is truncated or malformed.`);
+  if (width !== expectedWidth || height !== expectedHeight) {
+    throw new Error(`${path} must be ${expectedWidth}x${expectedHeight}, got ${width}x${height}.`);
+  }
+}
+
 async function buildExtension() {
   await rm('dist', { recursive: true, force: true });
   await mkdir('dist', { recursive: true });
@@ -37,6 +62,8 @@ async function buildWeb() {
   await rm('dist-web', { recursive: true, force: true });
   await mkdir('dist-web/icons', { recursive: true });
   const clientId = process.env.PASSMAN_GOOGLE_CLIENT_ID || '';
+  await assertPng('src/web/icons/icon-192.png', 192, 192);
+  await assertPng('src/web/icons/icon-512.png', 512, 512);
 
   await build({
     entryPoints: { app: 'src/web/web.js' },
