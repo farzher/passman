@@ -30,6 +30,16 @@ async function mutate(change) {
 async function handleWebMessage(message) {
   if (!message || typeof message.type !== 'string') throw new Error('Invalid request.');
 
+  if (message.type === 'STATE') {
+    try {
+      const { key, payload, settings } = await readVault();
+      key.fill(0);
+      return { exists: true, unlocked: true, settings, items: payload.items };
+    } catch {}
+    const exists = !!await getEnvelope();
+    return { exists, unlocked: false, settings: await getSettings(), items: [] };
+  }
+
   if (message.type === 'STATUS') {
     const exists = !!await getEnvelope();
     let unlocked = false;
