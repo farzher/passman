@@ -2,7 +2,7 @@ import { createEnvelope, rewrapKey, unlockEnvelope, assertEnvelope } from '../cr
 import { clearSession, getEnvelope, getSettings, readVault, setEnvelope, setSessionKey, setSettings, writeVault } from '../vault/store';
 import { displayHost, loginMatchesUrl, parseUrl, uuid } from '../shared/util';
 import { importKey, materialize } from '../import/chrome-csv';
-import { restoreFromDrive, syncNow } from '../sync/google-drive';
+import { refreshMetadata, restoreFromDrive, syncNow } from '../sync/google-drive';
 
 void chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
 void chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
@@ -64,7 +64,12 @@ async function handle(message, sender) {
       await readVault();
       unlocked = true;
     } catch {}
-    return { exists, unlocked, settings: await getSettings() };
+    let settings = await getSettings();
+    if (exists && !unlocked && settings.syncEnabled) {
+      await refreshMetadata(false).catch(() => {});
+      settings = await getSettings();
+    }
+    return { exists, unlocked, settings };
   }
 
   if (message.type === 'SETUP') {
