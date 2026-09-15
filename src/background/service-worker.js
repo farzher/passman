@@ -266,6 +266,7 @@ async function handle(message, sender) {
   }
 
   if (message.type === 'SYNC') {
+    await refreshMetadata(!!message.interactive);
     await syncNow(!!message.interactive);
     return getSettings();
   }
