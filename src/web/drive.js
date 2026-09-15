@@ -8,6 +8,7 @@ let accessToken = '';
 let tokenExpiresAt = 0;
 let tokenClient = null;
 let authorizationPromise = null;
+let workerTokenPromise = null;
 let workerTokenChecked = false;
 let driveConnected = false;
 
@@ -23,7 +24,7 @@ function tokenValid() {
 }
 
 function driveResumeNeeded() {
-  return driveConnected && !tokenValid();
+  return driveConnected && workerTokenChecked && !tokenValid();
 }
 
 function setDriveConnected(value) {
@@ -56,15 +57,20 @@ function getTokenClient() {
 }
 
 async function restoreWorkerToken() {
-  if (tokenValid() || workerTokenChecked) return tokenValid();
-  workerTokenChecked = true;
-  const saved = await workerMessage({ type: 'PASSMAN_DRIVE_GET' });
-  if (saved?.token && Number(saved.expiresAt) > Date.now()) {
-    accessToken = saved.token;
-    tokenExpiresAt = Number(saved.expiresAt);
-    return true;
-  }
-  return false;
+  if (tokenValid()) return true;
+  if (workerTokenChecked) return false;
+  if (workerTokenPromise) return workerTokenPromise;
+  workerTokenPromise = (async () => {
+    const saved = await workerMessage({ type: 'PASSMAN_DRIVE_GET' });
+    workerTokenChecked = true;
+    if (saved?.token && Number(saved.expiresAt) > Date.now()) {
+      accessToken = saved.token;
+      tokenExpiresAt = Number(saved.expiresAt);
+      return true;
+    }
+    return false;
+  })().finally(() => { workerTokenPromise = null; });
+  return workerTokenPromise;
 }
 
 function rememberToken(token, expiresAt) {
