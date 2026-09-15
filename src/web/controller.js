@@ -97,7 +97,7 @@ async function handleWebMessage(message) {
         password: input.password,
         createdAt: old?.createdAt || now,
         updatedAt: now,
-        ...(old?.lastUsedAt ? { lastUsedAt: old.lastUsedAt } : {})
+        lastUsedAt: old?.lastUsedAt ?? null
       };
       if (old) Object.assign(old, next);
       else payload.items.push(next);
