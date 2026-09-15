@@ -1,4 +1,4 @@
-const CACHE = 'passman-shell-v3';
+const CACHE = 'passman-shell-v4';
 const SHELL = [
   './',
   './index.html',
@@ -12,11 +12,18 @@ const SHELL = [
 
 let sessionKey = null;
 let sessionTouched = 0;
+let driveToken = '';
+let driveTokenExpiresAt = 0;
 
 function clearSession() {
   sessionKey?.fill(0);
   sessionKey = null;
   sessionTouched = 0;
+}
+
+function clearDriveToken() {
+  driveToken = '';
+  driveTokenExpiresAt = 0;
 }
 
 self.addEventListener('install', event => {
@@ -65,6 +72,28 @@ self.addEventListener('message', event => {
 
     if (message.type === 'PASSMAN_SESSION_CLEAR') {
       clearSession();
+      port.postMessage({ ok: true });
+      return;
+    }
+
+    if (message.type === 'PASSMAN_DRIVE_SET') {
+      const token = String(message.token || '');
+      const expiresAt = Number(message.expiresAt) || 0;
+      if (!token || expiresAt <= Date.now()) throw new Error('Invalid Drive token.');
+      driveToken = token;
+      driveTokenExpiresAt = expiresAt;
+      port.postMessage({ ok: true });
+      return;
+    }
+
+    if (message.type === 'PASSMAN_DRIVE_GET') {
+      if (driveToken && Date.now() >= driveTokenExpiresAt) clearDriveToken();
+      port.postMessage({ ok: true, token: driveToken || null, expiresAt: driveTokenExpiresAt });
+      return;
+    }
+
+    if (message.type === 'PASSMAN_DRIVE_CLEAR') {
+      clearDriveToken();
       port.postMessage({ ok: true });
     }
   } catch (error) {
