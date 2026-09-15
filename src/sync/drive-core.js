@@ -135,7 +135,9 @@ ${JSON.stringify(envelope)}\r
       file = await upload(envelope, file);
       await setSettings({ driveFileId: file.id, driveVersion: file.version, lastSyncAt: Date.now(), lastSyncError: undefined });
     } catch (error) {
-      await setSettings({ lastSyncError: error instanceof Error ? error.message : String(error) });
+      if (error?.code !== 'DRIVE_AUTH_REQUIRED') {
+        await setSettings({ lastSyncError: error instanceof Error ? error.message : String(error) });
+      }
       throw error;
     } finally {
       key?.fill(0);
