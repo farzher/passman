@@ -1,4 +1,4 @@
-const CACHE = 'passman-shell-v1';
+const CACHE = 'passman-shell-v2';
 const SHELL = [
   './',
   './index.html',
@@ -11,7 +11,8 @@ const SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  const freshShell = SHELL.map(url => new Request(url, { cache: 'reload' }));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(freshShell)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -28,13 +29,14 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
 
+  const freshRequest = new Request(request, { cache: 'no-store' });
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(() => caches.match('./index.html')));
+    event.respondWith(fetch(freshRequest).catch(() => caches.match('./index.html')));
     return;
   }
 
   event.respondWith(
-    fetch(request)
+    fetch(freshRequest)
       .then(response => {
         if (response.ok) {
           const copy = response.clone();
