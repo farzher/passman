@@ -1,8 +1,13 @@
 # PassMan
 
-PassMan is a minimal Manifest V3 password manager for Chrome. It stores username/password logins in one locally encrypted vault, provides user-initiated inline autofill, imports Chrome CSV exports, and can sync the same encrypted vault through the user's Google Drive `appDataFolder`.
+PassMan is a small encrypted password manager with two clients:
 
-## Develop and load
+- a Manifest V3 Chrome extension with inline browser autofill
+- a static installable PWA for managing, copying, importing, exporting, and syncing the same encrypted vault
+
+Both clients use the same encrypted envelope format, Argon2id/AES-GCM implementation, password generator, CSV importer, and Drive conflict merge logic. The PWA is deployed at `https://farzher.github.io/passman/`.
+
+## Development
 
 Requirements: Node.js 20+ and Chrome 120+.
 
@@ -11,58 +16,106 @@ npm install
 npm run build
 ```
 
-Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select either the project directory or its self-contained `dist/` directory.
+Useful targets:
 
-There is no test framework by design. `npm run build` is the compile/bundle check. Source is plain JavaScript and the UI is plain HTML/CSS.
+```sh
+npm run build:extension
+npm run build:web
+```
 
-## Google OAuth development setup
+`npm run build` is the project compile/bundle check. There is intentionally no test framework.
 
-Drive sync needs a Google Cloud OAuth client configured for the unpacked extension:
+### Chrome extension
 
-1. Create/select a Google Cloud project and enable **Google Drive API**.
-2. Configure the OAuth consent screen. Add your Google account as a test user while the app is in testing.
-3. Build/load PassMan and copy its extension ID from `chrome://extensions`.
-4. Create a Chrome Extension OAuth client for that extension ID.
-5. Replace the placeholder `oauth2.client_id` in `manifest.json` with the client ID, then rebuild and reload.
+`npm run build:extension` writes `dist/`. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select either the project directory or `dist/`.
 
-Only `https://www.googleapis.com/auth/drive.appdata` is requested. PassMan cannot read normal Drive documents. No PassMan server is involved.
+The extension remains the only client that can provide browser-page autofill. Its background service worker owns extension storage and content-script requests.
+
+### PWA
+
+`npm run build:web` writes `dist-web/`. Serve that directory over HTTP(S) for local development. The PWA uses relative paths so the same output works at the GitHub Pages `/passman/` base path.
+
+The web version supports:
+
+- encrypted local persistence in IndexedDB
+- reload/manual/inactivity locking with vault keys kept only in memory
+- search, add, edit, delete, view, and explicit username/password copy
+- the existing password generator and Chrome Password Manager CSV import
+- encrypted `.pm` import/export
+- Google Drive restore/sync through `appDataFolder`
+- offline loading of the static application shell
+- installation on supported desktop/mobile browsers
+
+A PWA cannot register as a system password provider, so it cannot provide system-wide mobile autofill like a native password-manager app.
+
+## Google OAuth
+
+The extension OAuth client is configured in `manifest.json` and requests only:
+
+`https://www.googleapis.com/auth/drive.appdata`
+
+For the PWA, create a **Web application** OAuth client in the **same Google Cloud project as the extension OAuth client**. This is important because Drive `appDataFolder` is private to the application; using credentials from a different Cloud project can expose a different app-data space instead of the existing `passman.pm`.
+
+PassMan expects OAuth clients from that same Cloud project to reach the same app-data space, but Google's public Drive documentation describes `appDataFolder` isolation at the application level rather than guaranteeing every cross-client/platform combination. Verify **Restore from Google Drive** succeeds in the PWA before relying on web sync. If the Web client is presented with a separate app-data space, the PWA cannot see the extension vault; PassMan will not overwrite an existing vault it can see.
+
+Configure the Web client with this authorized JavaScript origin:
+
+`https://farzher.github.io`
+
+No client secret is used or required.
+
+Set the public client ID as the repository Actions variable:
+
+`PASSMAN_GOOGLE_CLIENT_ID`
+
+The Pages workflow injects that value at build time. A local build can use:
+
+```sh
+PASSMAN_GOOGLE_CLIENT_ID="1234567890-example.apps.googleusercontent.com" npm run build:web
+```
+
+If the variable is absent, the PWA still builds and works locally with encrypted import/export; Drive buttons show a configuration error instead of risking a new or inaccessible vault.
+
+The browser keeps Google access tokens only in memory. Tokens are never written to IndexedDB, localStorage, logs, backups, or the repository.
+
+## GitHub Pages
+
+`.github/workflows/pages.yml` builds both the extension and web targets on pushes and pull requests. On `main`, it uploads only `dist-web/` and deploys it through GitHub Pages.
+
+If Pages has never been enabled for the repository, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions** once. The expected URL is:
+
+`https://farzher.github.io/passman/`
 
 ## Architecture
 
-- `src/background/service-worker.js` is the trusted core and the only code allowed to access extension storage.
-- `src/crypto/` performs key derivation and authenticated encryption.
-- `src/vault/` contains the small login model and persistent/session storage operations.
-- `src/sync/` directly synchronizes one `passman.pm` file with Drive and performs a small three-way merge.
-- `src/content/autofill.js` runs in Chrome's isolated world. It receives matching names/usernames only; it requests one password only after a user chooses it.
-- `src/popup/` and `src/app/` provide the toolbar and management/onboarding UI.
+- `src/background/service-worker.js`: extension-only trusted core and content-script message handling.
+- `src/app/app.js`: shared management/onboarding UI. It receives a platform RPC adapter.
+- `src/crypto/`: shared Argon2id and AES-GCM envelope implementation.
+- `src/vault/`: extension storage/session handling and common model defaults.
+- `src/sync/drive-core.js`: shared Drive `passman.pm` sync/restore/conflict logic.
+- `src/sync/google-drive.js`: extension `chrome.identity` adapter.
+- `src/web/`: IndexedDB/in-memory session adapter, Google Identity Services adapter, PWA shell, manifest, and service worker.
+- `src/import/`: shared Chrome Password Manager CSV import.
+- `src/shared/`: generator and utility functions.
 
-Service-worker globals are not used for unlock state. The wrapped encrypted vault is in `chrome.storage.local`; the temporary vault key and timestamps are in `chrome.storage.session`. Both stores are immediately restricted to trusted extension contexts.
+The PWA intentionally does not use React, Vue, a router, a server, analytics, telemetry, remote fonts, or a third-party UI framework.
 
-## Encryption
+## Security model
 
-A new vault gets a random 256-bit vault key. The master password is processed with packaged `@noble/hashes` Argon2id (64 MiB, three iterations), and the result wraps the vault key using AES-256-GCM. The complete JSON payload is separately encrypted with that random key and a fresh 96-bit nonce on every write. Changing the master password only re-wraps the vault key. The master password and plaintext vault are never uploaded.
+A new vault gets a random 256-bit vault key. The master password is processed with packaged `@noble/hashes` Argon2id using 64 MiB memory and three iterations. That derived key wraps the vault key with AES-256-GCM. The complete JSON vault payload is separately encrypted with the random vault key and a fresh 96-bit nonce on every write.
 
-The encrypted envelope contains its format version, Argon2id parameters/salt, wrapped vault key, and encrypted payload. Manual `.pm` backups and Drive use this same authenticated encrypted envelope.
+The encrypted envelope contains its format version, Argon2id parameters/salt, wrapped vault key, and encrypted payload. `.pm` backups and Drive use this exact same authenticated envelope. Plaintext credentials and master passwords are never uploaded.
+
+The extension persists only the encrypted envelope/settings and keeps the temporary unlock key in Chrome session storage. The PWA persists only the encrypted envelope/settings in IndexedDB and keeps the unlock key in JavaScript memory, so a reload locks the vault. Manual lock and inactivity timeout clear key references where JavaScript permits.
+
+JavaScript cannot guarantee physical secure-memory zeroization. PassMan overwrites mutable `Uint8Array` key buffers when practical and avoids persisting decrypted payloads, master passwords, vault keys, or OAuth tokens.
 
 ## Drive sync
 
-The extension stores exactly one `passman.pm` in Drive's hidden `appDataFolder`. Local writes complete first, so Drive outages do not prevent password access. Before upload, PassMan reads the current Drive version. Divergent snapshots are merged by stable item ID against encrypted baseline fingerprints. Unrelated changes survive; simultaneous edits of one credential retain a visible `(sync conflict)` copy. Deletes are represented by encrypted tombstones. Conditional Drive writes are retried after downloading and merging a racing version.
+PassMan stores exactly one `passman.pm` in Drive's hidden `appDataFolder`. Local writes complete first. Before upload, PassMan reads the current Drive version. Divergent snapshots are merged by stable item ID against encrypted baseline fingerprints. Unrelated changes survive, simultaneous edits retain a visible `(sync conflict)` copy, deletes use encrypted tombstones, and conditional writes retry after downloading a racing version.
 
-## Permissions
+First-time Drive setup never overwrites a discovered remote vault. If `passman.pm` already exists and the current client has no established Drive version, PassMan requires restoring the existing vault instead.
 
-- `storage`: encrypted persistent vault/settings and temporary unlock key.
-- `activeTab`: show/fill passwords relevant to the tab where the toolbar was invoked.
-- `favicon`: display Chrome's cached site icons beside saved logins without contacting arbitrary sites.
-- `identity`: Chrome-managed Google OAuth.
-- `alarms`: enforce inactivity locking despite service-worker suspension.
-- `http://*/*`, `https://*/*` content-script matches: detect login fields and offer inline controls. The script cannot access extension storage and does not receive the full vault.
-- `https://www.googleapis.com/*`: call Drive directly. OAuth limits access to this app's private Drive data.
+## Offline behavior
 
-## Known MVP limitations
-
-- Inline detection intentionally handles conventional login/signup forms and top-level pages only; unusual shadow-DOM forms, cross-origin frames, and complex multi-page flows may need toolbar fill or manual management.
-- Save/update prompts are based on form submission and cannot reliably determine whether every site accepted the login.
-- Public-suffix-aware matching is not included; matching is conservative exact-host/subdomain matching and never downgrades an HTTPS credential onto HTTP.
-- Drive conflict copies are resolved by editing/deleting the visible copy; there is no dedicated conflict wizard.
-- Google OAuth must be configured per development extension ID. Chrome Web Store publication requires the corresponding production OAuth client and consent configuration.
-- JavaScript cannot guarantee secure-memory zeroization; PassMan clears session key material on lock and avoids long-lived worker globals.
+The PWA service worker caches only the static application shell on the same GitHub Pages origin. Google Identity Services and Drive API responses are never put into the service-worker cache. Drive operations naturally require a connection, while an already-created local encrypted vault remains usable offline after the page shell loads.
