@@ -10,6 +10,8 @@ const WEB_SETTINGS_VERSION = 2;
 let dbPromise;
 let sessionKey = null;
 let touched = 0;
+let workerSeededAt = 0;
+let workerTouchedAt = 0;
 
 function openDb() {
   if (!dbPromise) {
@@ -43,6 +45,26 @@ async function writeValue(key, value) {
   });
 }
 
+async function workerSession(message) {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    const worker = navigator.serviceWorker.controller || registration?.active;
+    if (!worker) return null;
+    return await new Promise(resolve => {
+      const channel = new MessageChannel();
+      const timer = setTimeout(() => resolve(null), 1500);
+      channel.port1.onmessage = event => {
+        clearTimeout(timer);
+        resolve(event.data?.ok ? event.data : null);
+      };
+      worker.postMessage(message, [channel.port2]);
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function getEnvelope() {
   return readValue(VAULT);
 }
@@ -74,26 +96,54 @@ async function setSessionKey(key) {
   sessionKey?.fill(0);
   sessionKey = new Uint8Array(key);
   touched = Date.now();
+  const result = await workerSession({ type: 'PASSMAN_SESSION_SET', key: new Uint8Array(sessionKey) });
+  workerSeededAt = Date.now();
+  workerTouchedAt = workerSeededAt;
+  if (Number.isFinite(result?.touched)) touched = result.touched;
 }
 
 async function clearSession() {
   sessionKey?.fill(0);
   sessionKey = null;
   touched = 0;
+  workerSeededAt = 0;
+  workerTouchedAt = 0;
+  await workerSession({ type: 'PASSMAN_SESSION_CLEAR' });
 }
 
 function touchSession() {
-  if (sessionKey) touched = Date.now();
+  if (!sessionKey) return;
+  touched = Date.now();
+  if (touched - workerSeededAt > 10_000) {
+    workerSeededAt = touched;
+    workerTouchedAt = touched;
+    void workerSession({ type: 'PASSMAN_SESSION_SET', key: new Uint8Array(sessionKey) });
+  } else if (touched - workerTouchedAt > 5_000) {
+    workerTouchedAt = touched;
+    void workerSession({ type: 'PASSMAN_SESSION_TOUCH' });
+  }
 }
 
 async function getSessionKey(touch = true) {
-  if (!sessionKey) throw new Error('PassMan is locked.');
   const settings = await getSettings();
-  if (settings.autoLockMinutes > 0 && Date.now() - touched > settings.autoLockMinutes * 60_000) {
+  const maxAgeMs = settings.autoLockMinutes > 0 ? settings.autoLockMinutes * 60_000 : 0;
+
+  if (!sessionKey) {
+    const restored = await workerSession({ type: 'PASSMAN_SESSION_GET', maxAgeMs });
+    if (restored?.key instanceof Uint8Array && restored.key.length === 32) {
+      sessionKey = new Uint8Array(restored.key);
+      touched = Number.isFinite(restored.touched) ? restored.touched : Date.now();
+      workerSeededAt = Date.now();
+      workerTouchedAt = workerSeededAt;
+    }
+  }
+
+  if (!sessionKey) throw new Error('PassMan is locked.');
+  if (maxAgeMs > 0 && Date.now() - touched > maxAgeMs) {
     await clearSession();
     throw new Error('PassMan is locked.');
   }
-  if (touch) touched = Date.now();
+  if (touch) touchSession();
   return new Uint8Array(sessionKey);
 }
 
