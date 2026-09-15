@@ -10,9 +10,23 @@ async function setEnvelope(envelope) {
   await chrome.storage.local.set({ [VAULT]: envelope });
 }
 async function getSettings() {
-  return { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get("settings")).settings || {} };
+  const stored = (await chrome.storage.local.get("settings")).settings || {};
+  let envelope = await getEnvelope();
+  const legacyHint = String(stored.passwordHint || "").trim();
+  if (envelope && !envelope.passwordHint && legacyHint) {
+    envelope = { ...envelope, passwordHint: { text: legacyHint.slice(0, 160), updatedAt: Date.now() } };
+    await setEnvelope(envelope);
+  }
+  return { ...DEFAULT_SETTINGS, ...stored, passwordHint: String(envelope?.passwordHint?.text ?? legacyHint) };
 }
 async function setSettings(patch) {
+  if (Object.prototype.hasOwnProperty.call(patch, "passwordHint")) {
+    const envelope = await getEnvelope();
+    if (envelope) {
+      const text = String(patch.passwordHint || "").trim().slice(0, 160);
+      await setEnvelope({ ...envelope, passwordHint: { text, updatedAt: Date.now() } });
+    }
+  }
   const settings = { ...await getSettings(), ...patch };
   await chrome.storage.local.set({ settings });
   return settings;
