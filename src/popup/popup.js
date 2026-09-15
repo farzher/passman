@@ -55,12 +55,50 @@ function applyPageContext(tab) {
   }
 }
 
+function updateUnlockHint(settings = {}) {
+  const form = app.querySelector('form.unlock');
+  if (!form) return;
+  const hint = String(settings.passwordHint || '').trim();
+  let button = form.querySelector('.show-hint');
+  let text = form.querySelector('.password-hint');
+
+  if (!hint) {
+    button?.remove();
+    text?.remove();
+    return;
+  }
+
+  if (!button) {
+    button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'link show-hint';
+    button.textContent = 'Show hint';
+    form.append(button);
+  }
+  if (!text) {
+    text = document.createElement('div');
+    text.className = 'password-hint';
+    text.hidden = true;
+    form.append(text);
+  }
+  if (!text.hidden) text.textContent = hint;
+  button.onclick = () => {
+    text.textContent = hint;
+    text.hidden = false;
+    button.hidden = true;
+  };
+}
+
 function refreshInBackground(state) {
   if (refreshPromise || !state.settings?.syncEnabled) return;
   if (state.unlocked && state.settings.lastSyncAt && Date.now() - state.settings.lastSyncAt <= 15_000) return;
   const message = state.unlocked ? { type: 'SYNC' } : { type: 'REFRESH_METADATA' };
   refreshPromise = rpc(message)
-    .then(() => render(false))
+    .then(async () => {
+      if (state.unlocked) return render(false);
+      const fresh = await rpc({ type: 'STATE' });
+      updateUnlockHint(fresh.settings || {});
+    })
     .catch(() => {})
     .finally(() => { refreshPromise = null; });
 }
@@ -68,15 +106,7 @@ function refreshInBackground(state) {
 function unlockView(error = '', settings = {}) {
   const hint = String(settings.passwordHint || '').trim();
   app.innerHTML = `<form class="unlock"><input name="password" type="password" placeholder="Master password" aria-label="Master password" autofocus required><div class="error">${esc(error)}</div><button class="primary" type="submit">Unlock</button>${hint ? '<button type="button" class="link show-hint">Show hint</button><div class="password-hint" hidden></div>' : ''}</form>`;
-  if (hint) {
-    const button = app.querySelector('.show-hint');
-    const text = app.querySelector('.password-hint');
-    button.onclick = () => {
-      text.textContent = hint;
-      text.hidden = false;
-      button.hidden = true;
-    };
-  }
+  updateUnlockHint(settings);
   app.querySelector('form').onsubmit = async event => {
     event.preventDefault();
     const button = event.submitter;
