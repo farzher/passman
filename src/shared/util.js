@@ -38,16 +38,14 @@ function displayHost(value) {
   return parseUrl(value)?.hostname.replace(/^www\./, '') || value;
 }
 function faviconUrl(value, size = 32) {
+  if (globalThis.passmanPlatform === 'web') return '';
   const page = parseUrl(value);
-  if (!page) return '';
   const runtime = globalThis.chrome?.runtime;
-  if (globalThis.passmanPlatform !== 'web' && runtime?.getURL) {
-    const url = new URL(runtime.getURL('_favicon/'));
-    url.searchParams.set('pageUrl', page.href);
-    url.searchParams.set('size', String(size));
-    return url.href;
-  }
-  return `https://${page.hostname}/favicon.ico`;
+  if (!page || !runtime?.getURL) return '';
+  const url = new URL(runtime.getURL('_favicon/'));
+  url.searchParams.set('pageUrl', page.href);
+  url.searchParams.set('size', String(size));
+  return url.href;
 }
 function send(message) {
   if (!globalThis.chrome?.runtime?.sendMessage) throw new Error('Extension messaging is unavailable.');
