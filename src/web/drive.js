@@ -72,21 +72,21 @@ async function restoreSavedToken() {
   if (savedTokenChecked) return false;
   if (savedTokenPromise) return savedTokenPromise;
   savedTokenPromise = (async () => {
-    const worker = await workerMessage({ type: 'PASSMAN_DRIVE_GET' });
-    if (worker?.token && Number(worker.expiresAt) > Date.now()) {
-      accessToken = worker.token;
-      tokenExpiresAt = Number(worker.expiresAt);
-      savedTokenChecked = true;
-      void setDriveToken(accessToken, tokenExpiresAt);
-      return true;
-    }
-
     const saved = await getDriveToken();
-    savedTokenChecked = true;
     if (saved?.token && saved.expiresAt > Date.now()) {
       accessToken = saved.token;
       tokenExpiresAt = saved.expiresAt;
+      savedTokenChecked = true;
       void workerMessage({ type: 'PASSMAN_DRIVE_SET', token: accessToken, expiresAt: tokenExpiresAt });
+      return true;
+    }
+
+    const worker = await workerMessage({ type: 'PASSMAN_DRIVE_GET' });
+    savedTokenChecked = true;
+    if (worker?.token && Number(worker.expiresAt) > Date.now()) {
+      accessToken = worker.token;
+      tokenExpiresAt = Number(worker.expiresAt);
+      void setDriveToken(accessToken, tokenExpiresAt);
       return true;
     }
     return false;
@@ -98,20 +98,16 @@ async function rememberToken(token, expiresAt) {
   accessToken = token;
   tokenExpiresAt = expiresAt;
   savedTokenChecked = true;
-  await Promise.all([
-    setDriveToken(token, expiresAt),
-    workerMessage({ type: 'PASSMAN_DRIVE_SET', token, expiresAt })
-  ]);
+  await setDriveToken(token, expiresAt);
+  void workerMessage({ type: 'PASSMAN_DRIVE_SET', token, expiresAt });
 }
 
 async function clearToken() {
   accessToken = '';
   tokenExpiresAt = 0;
   savedTokenChecked = true;
-  await Promise.all([
-    clearDriveToken(),
-    workerMessage({ type: 'PASSMAN_DRIVE_CLEAR' })
-  ]);
+  await clearDriveToken();
+  void workerMessage({ type: 'PASSMAN_DRIVE_CLEAR' });
 }
 
 async function authorizeDrive() {
