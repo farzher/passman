@@ -101,7 +101,7 @@ async function showMenu(input, anchor) {
     }
     for (const item of items) {
       const row = document.createElement('div'); row.className = 'item'; row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-label', `Fill password for ${item.username || 'this account'}`);
-      row.innerHTML = `<span class="site-icon"></span><div class="account"></div><button class="action copy" type="button" title="Copy password" aria-label="Copy password"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H7a2 2 0 0 0 2 2v9a2 2 0 0 0 2 2h1"></path></svg></button>`;
+      row.innerHTML = `<span class="site-icon"></span><div class="account"></div><button class="action copy" type="button" title="Copy password" aria-label="Copy password"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h1"></path></svg></button>`;
       row.querySelector('.account').textContent = item.username || 'No username';
       const mark = row.querySelector('.site-icon'), icon = faviconUrl(item.url);
       mark.textContent = item.name[0]?.toUpperCase() || 'P';
@@ -138,18 +138,22 @@ async function showMenu(input, anchor) {
 function attach(input) {
   if (attached.has(input) || !visible(input)) return; attached.add(input);
   const host = document.createElement('span');
-  Object.assign(host.style, { all: 'initial', position: 'fixed', zIndex: '2147483646', width: '22px', height: '22px' });
+  Object.assign(host.style, { all: 'initial', position: 'fixed', zIndex: '2147483646', width: '22px', height: '22px', display: document.activeElement === input ? 'block' : 'none' });
   const root = host.attachShadow({ mode: 'closed' });
   root.innerHTML = `<style>button{all:unset;width:20px;height:20px;border-radius:6px;background:#315efb;color:white;text-align:center;font:700 12px/20px system-ui;box-shadow:0 1px 4px #0003;cursor:pointer}button:hover{background:#244bd1}</style><button type="button" title="Fill with PassMan">P</button>`;
   const button = root.querySelector('button');
   containPointerEvents(button);
   button.onclick = event => { event.preventDefault(); event.stopPropagation(); void showMenu(input, host); };
   interactionContainer(input).append(host); position(host, input);
+  const show = () => { if (input.isConnected && visible(input)) { host.style.display = 'block'; position(host, input); } };
+  const hide = () => { if (document.activeElement !== input) host.style.display = 'none'; };
   const cleanup = () => {
     host.remove(); controls.delete(input); attached.delete(input);
+    input.removeEventListener('focus', show); input.removeEventListener('blur', hide);
     removeEventListener('scroll', update); removeEventListener('resize', update);
   };
-  const update = () => { if (!input.isConnected || !visible(input)) cleanup(); else position(host, input); };
+  const update = () => { if (!input.isConnected || !visible(input)) cleanup(); else if (host.style.display !== 'none') position(host, input); };
+  input.addEventListener('focus', show); input.addEventListener('blur', hide);
   controls.set(input, cleanup);
   addEventListener('scroll', update, { passive: true }); addEventListener('resize', update, { passive: true });
 }
