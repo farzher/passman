@@ -93,8 +93,6 @@ ${JSON.stringify(envelope)}\r
     const file = await findDriveVault(true);
     if (!file) throw new Error('No PassMan backup was found in this Google account.');
     const remote = await downloadDriveVault(file, true);
-    const payload = await decryptPayload((await readVault()).key, remote.envelope).catch(() => null);
-    if (payload) payload.syncedRevision = payload.revision;
     await setEnvelope(remote.envelope);
     await setSettings({ syncEnabled: true, driveFileId: file.id, driveVersion: file.version, driveEtag: remote.etag, lastSyncError: undefined });
     return remote.envelope;
@@ -178,7 +176,7 @@ ${JSON.stringify(envelope)}\r
       }
 
       let remoteMerged = false;
-      let etag = located.etag;
+      let etag = located.etag || (!remoteChanged ? settings.driveEtag : undefined);
 
       if (remoteChanged) {
         const remote = await downloadDriveVault(file, interactive);
@@ -203,7 +201,7 @@ ${JSON.stringify(envelope)}\r
 
         envelope = mergeHint(envelope, remote.envelope);
         payload = mergeVaults(payload, remotePayload);
-        etag = remote.etag;
+        etag = remote.etag || located.etag;
         remoteMerged = true;
       } else if (!etag) {
         const remote = await downloadDriveVault(file, interactive);
