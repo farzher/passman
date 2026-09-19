@@ -1,4 +1,4 @@
-import { assertEnvelope, decryptPayload } from '../crypto/vault-crypto.js';
+import { assertEnvelope, decryptPayload, replacePayload } from '../crypto/vault-crypto.js';
 import { mergeVaults, snapshot } from './merge.js';
 
 const API = 'https://www.googleapis.com/drive/v3';
@@ -14,7 +14,15 @@ function mergeHint(local, remote) {
   return { ...local, passwordHint: { text: String(b?.text || '').slice(0, 160), updatedAt: bt } };
 }
 
-function createDriveSync({ request, getEnvelope, getSettings, readVault, setEnvelope, setSettings, writeVault }) {
+function sameEnvelope(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function createDriveSync({ request, getEnvelope, getSettings, readVault, setEnvelope, setSettings }) {
+  let syncPromise = null;
+  let syncQueued = false;
+  let syncInteractive = false;
+
   async function checked(response) {
     if (!response.ok) throw new Error(`Google Drive error (${response.status}).`);
     return response;
@@ -24,6 +32,24 @@ function createDriveSync({ request, getEnvelope, getSettings, readVault, setEnve
     const q = encodeURIComponent(`name='${DRIVE_NAME}' and 'appDataFolder' in parents and trashed=false`);
     const response = await checked(await request(`${API}/files?spaces=appDataFolder&q=${q}&fields=files(id,version,modifiedTime)&pageSize=1`, {}, interactive));
     return (await response.json()).files[0] || null;
+  }
+
+  async function getDriveVault(fileId, interactive = false) {
+    const response = await request(`${API}/files/${fileId}?fields=id,version,modifiedTime`, {}, interactive);
+    if (response.status === 404) return null;
+    await checked(response);
+    return { file: await response.json(), etag: response.headers.get('etag') || undefined };
+  }
+
+  async function locateDriveVault(settings, interactive = false) {
+    if (settings.driveFileId) {
+      const known = await getDriveVault(settings.driveFileId, interactive);
+      if (known) return known;
+    }
+    const file = await findDriveVault(interactive);
+    if (!file) return null;
+    const known = await getDriveVault(file.id, interactive);
+    return known || { file };
   }
 
   async function downloadDriveVault(file, interactive = false) {
@@ -60,13 +86,15 @@ ${JSON.stringify(envelope)}\r
     }
     if (response.status === 412) throw new Error('DRIVE_CONFLICT');
     await checked(response);
-    return response.json();
+    return { file: await response.json(), etag: response.headers.get('etag') || undefined };
   }
 
   async function restoreFromDrive() {
     const file = await findDriveVault(true);
     if (!file) throw new Error('No PassMan backup was found in this Google account.');
     const remote = await downloadDriveVault(file, true);
+    const payload = await decryptPayload((await readVault()).key, remote.envelope).catch(() => null);
+    if (payload) payload.syncedRevision = payload.revision;
     await setEnvelope(remote.envelope);
     await setSettings({ syncEnabled: true, driveFileId: file.id, driveVersion: file.version, driveEtag: remote.etag, lastSyncError: undefined });
     return remote.envelope;
@@ -77,71 +105,163 @@ ${JSON.stringify(envelope)}\r
     if (!settings.syncEnabled) return false;
     const local = await getEnvelope();
     if (!local) return false;
-    const file = await findDriveVault(interactive);
-    if (!file) return false;
-    const remote = await downloadDriveVault(file, interactive);
+    const located = await locateDriveVault(settings, interactive);
+    if (!located) return false;
+    if (settings.driveVersion && String(settings.driveVersion) === String(located.file.version)) return false;
+    const remote = await downloadDriveVault(located.file, interactive);
     const merged = mergeHint(local, remote.envelope);
     if (merged === local) return false;
     await setEnvelope(merged);
     return true;
   }
 
-  async function syncNow(interactive = false) {
+  async function finishUpload(startEnvelope, nextEnvelope, uploaded, remoteMerged) {
+    const current = await getEnvelope();
+    if (sameEnvelope(current, startEnvelope)) {
+      await setEnvelope(nextEnvelope);
+      await setSettings({
+        driveFileId: uploaded.file.id,
+        driveVersion: uploaded.file.version,
+        driveEtag: uploaded.etag,
+        lastSyncAt: Date.now(),
+        lastSyncError: undefined
+      });
+      return;
+    }
+
+    syncQueued = true;
+    const patch = { driveFileId: uploaded.file.id, lastSyncError: undefined };
+    if (!remoteMerged) {
+      patch.driveVersion = uploaded.file.version;
+      patch.driveEtag = uploaded.etag;
+    }
+    await setSettings(patch);
+  }
+
+  async function syncAttempt(interactive) {
     const settings = await getSettings();
-    if (!settings.syncEnabled) return;
+    if (!settings.syncEnabled) return settings;
+
     let key;
     try {
-      let envelope, payload;
-      ({ key, envelope, payload } = await readVault());
-      let file = await findDriveVault(interactive);
-      if (!file) {
-        payload.syncBase = snapshot(payload);
-        envelope = await writeVault(key, envelope, payload);
-        file = await upload(envelope);
-        await setSettings({ driveFileId: file.id, driveVersion: file.version, lastSyncAt: Date.now(), lastSyncError: undefined });
-        return;
+      let { key: vaultKey, envelope, payload } = await readVault();
+      key = vaultKey;
+      const startEnvelope = envelope;
+      const localChanged =
+        payload.syncedRevision !== payload.revision ||
+        (Number(envelope?.passwordHint?.updatedAt) || 0) > (Number(settings.lastSyncAt) || 0);
+
+      const located = await locateDriveVault(settings, interactive);
+      if (!located) {
+        payload = { ...payload, syncBase: snapshot(payload), syncedRevision: payload.revision };
+        envelope = await replacePayload(key, envelope, payload);
+        const uploaded = await upload(envelope);
+        await finishUpload(startEnvelope, envelope, uploaded, false);
+        return getSettings();
       }
 
-      const remote = await downloadDriveVault(file, interactive);
+      const file = located.file;
       if (!settings.driveVersion) {
         throw new Error('A PassMan vault already exists in this Google account. Restore it from the welcome screen instead of replacing it.');
       }
 
-      if (settings.driveVersion !== file.version) {
-        envelope = mergeHint(envelope, remote.envelope);
+      const remoteChanged = String(settings.driveVersion) !== String(file.version);
+      if (!remoteChanged && !localChanged) {
+        await setSettings({
+          driveFileId: file.id,
+          driveVersion: file.version,
+          driveEtag: located.etag || settings.driveEtag,
+          lastSyncAt: Date.now(),
+          lastSyncError: undefined
+        });
+        return getSettings();
+      }
+
+      let remoteMerged = false;
+      let etag = located.etag;
+
+      if (remoteChanged) {
+        const remote = await downloadDriveVault(file, interactive);
         const remotePayload = await decryptPayload(key, remote.envelope);
+
+        if (!localChanged) {
+          const current = await getEnvelope();
+          if (sameEnvelope(current, startEnvelope)) {
+            await setEnvelope(remote.envelope);
+            await setSettings({
+              driveFileId: file.id,
+              driveVersion: file.version,
+              driveEtag: remote.etag,
+              lastSyncAt: Date.now(),
+              lastSyncError: undefined
+            });
+          } else {
+            syncQueued = true;
+          }
+          return getSettings();
+        }
+
+        envelope = mergeHint(envelope, remote.envelope);
         payload = mergeVaults(payload, remotePayload);
-        envelope = await writeVault(key, envelope, payload);
-      } else if (!payload.syncBase) {
-        payload.syncBase = snapshot(payload);
-        envelope = await writeVault(key, envelope, payload);
+        etag = remote.etag;
+        remoteMerged = true;
+      } else if (!etag) {
+        const remote = await downloadDriveVault(file, interactive);
+        envelope = mergeHint(envelope, remote.envelope);
+        payload = mergeVaults(payload, await decryptPayload(key, remote.envelope));
+        etag = remote.etag;
+        remoteMerged = true;
       }
 
-      try {
-        file = await upload(envelope, file, remote.etag);
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== 'DRIVE_CONFLICT') throw error;
-        const latestFile = await findDriveVault(interactive);
-        if (!latestFile) throw error;
-        const latest = await downloadDriveVault(latestFile, interactive);
-        envelope = mergeHint(envelope, latest.envelope);
-        payload = mergeVaults(payload, await decryptPayload(key, latest.envelope));
-        envelope = await writeVault(key, envelope, payload);
-        file = await upload(envelope, latestFile, latest.etag);
-      }
+      payload = { ...payload, syncBase: snapshot(payload), syncedRevision: payload.revision };
+      envelope = await replacePayload(key, envelope, payload);
+      const uploaded = await upload(envelope, file, etag);
+      await finishUpload(startEnvelope, envelope, uploaded, remoteMerged);
+      return getSettings();
+    } finally {
+      key?.fill(0);
+    }
+  }
 
-      payload.syncBase = snapshot(payload);
-      envelope = await writeVault(key, envelope, payload);
-      file = await upload(envelope, file);
-      await setSettings({ driveFileId: file.id, driveVersion: file.version, lastSyncAt: Date.now(), lastSyncError: undefined });
+  async function syncOnce(interactive) {
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          return await syncAttempt(interactive);
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'DRIVE_CONFLICT' || attempt === 2) throw error;
+        }
+      }
     } catch (error) {
       if (error?.code !== 'DRIVE_AUTH_REQUIRED') {
         await setSettings({ lastSyncError: error instanceof Error ? error.message : String(error) });
       }
       throw error;
-    } finally {
-      key?.fill(0);
     }
+  }
+
+  function syncNow(interactive = false) {
+    syncQueued = true;
+    if (interactive) syncInteractive = true;
+
+    if (!syncPromise) {
+      syncPromise = (async () => {
+        let result;
+        while (syncQueued) {
+          const runInteractive = syncInteractive;
+          syncQueued = false;
+          syncInteractive = false;
+          try {
+            result = await syncOnce(runInteractive);
+          } catch (error) {
+            if (!syncQueued) throw error;
+          }
+        }
+        return result;
+      })().finally(() => { syncPromise = null; });
+    }
+
+    return syncPromise;
   }
 
   return { downloadDriveVault, findDriveVault, refreshMetadata, restoreFromDrive, syncNow };
