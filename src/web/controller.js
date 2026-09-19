@@ -191,6 +191,7 @@ async function handleWebMessage(message) {
     try {
       ({ key: verifiedKey } = await unlockEnvelope(message.currentPassword, envelope));
       await setEnvelope(await rewrapKey(message.password, verifiedKey, envelope));
+      await setSettings({ syncDirty: true });
     } finally {
       verifiedKey?.fill(0);
     }
