@@ -122,7 +122,8 @@ ${JSON.stringify(envelope)}\r
         driveVersion: uploaded.file.version,
         driveEtag: uploaded.etag,
         lastSyncAt: Date.now(),
-        lastSyncError: undefined
+        lastSyncError: undefined,
+        syncDirty: false
       });
       return;
     }
@@ -146,6 +147,7 @@ ${JSON.stringify(envelope)}\r
       key = vaultKey;
       const startEnvelope = envelope;
       const localChanged =
+        !!settings.syncDirty ||
         payload.syncedRevision !== payload.revision ||
         (Number(envelope?.passwordHint?.updatedAt) || 0) > (Number(settings.lastSyncAt) || 0);
 
@@ -170,7 +172,8 @@ ${JSON.stringify(envelope)}\r
           driveVersion: file.version,
           driveEtag: located.etag || settings.driveEtag,
           lastSyncAt: Date.now(),
-          lastSyncError: undefined
+          lastSyncError: undefined,
+          syncDirty: false
         });
         return getSettings();
       }
@@ -191,7 +194,8 @@ ${JSON.stringify(envelope)}\r
               driveVersion: file.version,
               driveEtag: remote.etag,
               lastSyncAt: Date.now(),
-              lastSyncError: undefined
+              lastSyncError: undefined,
+              syncDirty: false
             });
           } else {
             syncQueued = true;
