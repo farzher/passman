@@ -29,9 +29,13 @@ function trustedExtension(sender) {
 
 async function mutate(change) {
   const { key, envelope, payload } = await readVault();
-  change(payload);
-  payload.revision++;
-  await writeVault(key, envelope, payload);
+  try {
+    change(payload);
+    payload.revision++;
+    await writeVault(key, envelope, payload);
+  } finally {
+    key.fill(0);
+  }
   void syncNow(false).catch(() => {});
   return payload;
 }
@@ -277,7 +281,6 @@ async function handle(message, sender) {
   }
 
   if (message.type === 'SYNC') {
-    await refreshMetadata(!!message.interactive);
     await syncNow(!!message.interactive);
     return getSettings();
   }
