@@ -216,7 +216,7 @@ async function listView(siteUrl = '', initialItems) {
 async function editView(id, suggestedUrl = '', initialItems) {
   const items = initialItems || (id ? await rpc({ type: 'LIST' }) : []);
   const item = id ? items.find(x => x.id === id) : null;
-  shell(`<button class="back link">← Passwords</button><div class="editor"><h1>${item ? escape(item.name) : 'Add password'}</h1><form><label>Name<input name="name" value="${escape(item?.name || '')}" required></label><label>Website<input name="url" value="${escape(item?.urls[0] || suggestedUrl)}" placeholder="https://example.com" required></label><label>Username<div class="copy-input"><input name="username" value="${escape(item?.username || '')}" autocomplete="off" required><button type="button" class="copy-username secondary">Copy</button></div></label><label>Password<div class="password-input"><input name="password" value="${escape(item?.password || '')}" type="password" autocomplete="new-password" required><button type="button" class="generate secondary" title="Generate a memorable password">Generate</button><button type="button" class="show secondary">Show</button></div></label><div class="form-error"></div><div class="editor-actions"><button class="primary">Save</button>${item ? '<button type="button" class="danger delete">Delete password</button>' : ''}</div></form></div>`);
+  shell(`<button class="back link">← Passwords</button><div class="editor"><h1>${item ? escape(item.name) : 'Add password'}</h1><form><label>Name<input name="name" value="${escape(item?.name || '')}" required></label><label>Website<input name="url" value="${escape(item?.urls[0] || suggestedUrl)}" placeholder="https://example.com" required></label><label>Username<div class="copy-input"><input name="username" value="${escape(item?.username || '')}" autocomplete="off" required><button type="button" class="copy-username secondary">Copy</button></div></label><label>Password<div class="password-input"><input name="password" value="${escape(item?.password || '')}" type="password" autocomplete="new-password" required><button type="button" class="generate secondary" title="Generate a memorable password">Generate</button><button type="button" class="copy-password secondary">Copy</button><button type="button" class="show secondary">Show</button></div></label><div class="form-error"></div><div class="editor-actions"><button class="primary">Save</button>${item ? '<button type="button" class="danger delete">Delete password</button>' : ''}</div></form></div>`);
   root.querySelector('.back').onclick = () => go(''); const form = root.querySelector('form'); const password = form.elements.password;
   const showButton = root.querySelector('.show');
   showButton.onclick = () => {
@@ -226,6 +226,10 @@ async function editView(id, suggestedUrl = '', initialItems) {
     if (revealing && item) void rpc({ type: 'MARK_USED', id: item.id }).catch(() => {});
   };
   root.querySelector('.generate').onclick = () => { password.value = generatePassword(); password.type = 'text'; showButton.textContent = 'Hide'; password.focus(); password.select(); };
+  root.querySelector('.copy-password').onclick = async event => {
+    await copyText(password.value, event.currentTarget);
+    if (item) void rpc({ type: 'MARK_USED', id: item.id }).catch(() => {});
+  };
   root.querySelector('.copy-username').onclick = event => copyText(form.elements.username.value, event.currentTarget);
   form.onsubmit = async event => { event.preventDefault(); const data = new FormData(form); try { await rpc({ type: 'UPSERT', login: { id: item?.id, name: data.get('name'), urls: [data.get('url')], username: data.get('username'), password: data.get('password') } }); go(''); } catch (e) { setError(form, e); } };
   root.querySelector('.delete')?.addEventListener('click', async () => { if (confirm(`Delete ${item.name}?`)) { await rpc({ type: 'DELETE', id: item.id }); go(''); } });
